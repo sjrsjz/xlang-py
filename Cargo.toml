@@ -1,0 +1,13 @@
+[package]
+name = "xlang_py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "xlang_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24.2", features = ["extension-module"] }
+xlang_frontend = "0.1.4"
+xlang_vm_core = "0.1.3"
