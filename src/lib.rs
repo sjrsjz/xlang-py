@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyNone, PyString, PyTuple};
 use pyo3::{create_exception, prelude::*};
-use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString};
 use xlang::{Lambda, WrappedPyFunction};
 use xlang_vm_core::executor::variable::{
     VMBytes as XlangVMBytes, VMFloat as XlangVMFloat, VMInt as XlangVMInt,
@@ -432,6 +432,137 @@ impl Drop for VMBytes {
         self.gc_ref.drop_ref();
     }
 }
+// Helper function to handle Python basic types conversion using GC system
+fn extract_xlang_gc_ref_with_gc_arc(
+    obj: &Bound<'_, PyAny>,
+    gc_system: Arc<RefCell<XlangGCSystem>>,
+) -> PyResult<XlangGCRef> {
+    // First try to extract as a VM type
+    if let Ok(gc_ref) = extract_xlang_gc_ref(obj) {
+        return Ok(gc_ref);
+    }
+    // If not a VM type, handle basic Python types
+    if let Ok(py_int) = obj.downcast::<PyInt>() {
+        let value = py_int.extract::<i64>()?;
+        let xlang_int = XlangVMInt::new(value);
+        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_int);
+        Ok(new_gc_ref)
+    } else if let Ok(py_float) = obj.downcast::<PyFloat>() {
+        let value = py_float.extract::<f64>()?;
+        let xlang_float = XlangVMFloat::new(value);
+        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_float);
+        Ok(new_gc_ref)
+    } else if let Ok(py_str) = obj.downcast::<PyString>() {
+        let value = py_str.to_string_lossy().to_string();
+        let xlang_string = XlangVMString::new(&value);
+        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_string);
+        Ok(new_gc_ref)
+    } else if let Ok(py_bytes) = obj.downcast::<PyBytes>() {
+        let value: Vec<u8> = py_bytes.extract()?;
+        let xlang_bytes = XlangVMBytes::new(&value);
+        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_bytes);
+        Ok(new_gc_ref)
+    } else if let Ok(py_list) = obj.downcast::<PyList>() {
+        let mut xlang_list: Vec<XlangGCRef> = Vec::new();
+        for item in py_list.iter() {
+            let item_ref = extract_xlang_gc_ref_with_gc_arc(&item, Arc::clone(&gc_system))?;
+            xlang_list.push(item_ref);
+        }
+        let new_gc_ref = gc_system
+            .borrow_mut()
+            .new_object(XlangVMTuple::new(&mut xlang_list.iter_mut().collect()));
+        for item in &mut xlang_list {
+            item.drop_ref();
+        }
+        Ok(new_gc_ref)
+    } else if let Ok(py_list) = obj.downcast::<PyTuple>() {
+        let mut xlang_list: Vec<XlangGCRef> = Vec::new();
+        for item in py_list.iter() {
+            let item_ref = extract_xlang_gc_ref_with_gc_arc(&item, Arc::clone(&gc_system))?;
+            xlang_list.push(item_ref);
+        }
+        let new_gc_ref = gc_system
+            .borrow_mut()
+            .new_object(XlangVMTuple::new(&mut xlang_list.iter_mut().collect()));
+        for item in &mut xlang_list {
+            item.drop_ref();
+        }
+        Ok(new_gc_ref)
+    } else if let Ok(_) = obj.downcast::<PyNone>() {
+        let xlang_none = XlangVMNull::new();
+        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_none);
+        Ok(new_gc_ref)
+    } else {
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Expected a xlang VM type or basic Python type for extraction",
+        ))
+    }
+}
+
+// Helper function to handle Python basic types conversion using GC system
+fn extract_xlang_gc_ref_with_gc(
+    obj: &Bound<'_, PyAny>,
+    gc_system: &mut XlangGCSystem,
+) -> PyResult<XlangGCRef> {
+    // First try to extract as a VM type
+    if let Ok(gc_ref) = extract_xlang_gc_ref(obj) {
+        return Ok(gc_ref);
+    }
+    // If not a VM type, handle basic Python types
+    if let Ok(py_int) = obj.downcast::<PyInt>() {
+        let value = py_int.extract::<i64>()?;
+        let xlang_int = XlangVMInt::new(value);
+        let new_gc_ref = gc_system.new_object(xlang_int);
+        Ok(new_gc_ref)
+    } else if let Ok(py_float) = obj.downcast::<PyFloat>() {
+        let value = py_float.extract::<f64>()?;
+        let xlang_float = XlangVMFloat::new(value);
+        let new_gc_ref = gc_system.new_object(xlang_float);
+        Ok(new_gc_ref)
+    } else if let Ok(py_str) = obj.downcast::<PyString>() {
+        let value = py_str.to_string_lossy().to_string();
+        let xlang_string = XlangVMString::new(&value);
+        let new_gc_ref = gc_system.new_object(xlang_string);
+        Ok(new_gc_ref)
+    } else if let Ok(py_bytes) = obj.downcast::<PyBytes>() {
+        let value: Vec<u8> = py_bytes.extract()?;
+        let xlang_bytes = XlangVMBytes::new(&value);
+        let new_gc_ref = gc_system.new_object(xlang_bytes);
+        Ok(new_gc_ref)
+    } else if let Ok(py_list) = obj.downcast::<PyList>() {
+        let mut xlang_list: Vec<XlangGCRef> = Vec::new();
+        for item in py_list.iter() {
+            let item_ref = extract_xlang_gc_ref_with_gc(&item, gc_system)?;
+            xlang_list.push(item_ref);
+        }
+        let new_gc_ref =
+            gc_system.new_object(XlangVMTuple::new(&mut xlang_list.iter_mut().collect()));
+        for item in &mut xlang_list {
+            item.drop_ref();
+        }
+        Ok(new_gc_ref)
+    } else if let Ok(py_list) = obj.downcast::<PyTuple>() {
+        let mut xlang_list: Vec<XlangGCRef> = Vec::new();
+        for item in py_list.iter() {
+            let item_ref = extract_xlang_gc_ref_with_gc(&item, gc_system)?;
+            xlang_list.push(item_ref);
+        }
+        let new_gc_ref =
+            gc_system.new_object(XlangVMTuple::new(&mut xlang_list.iter_mut().collect()));
+        for item in &mut xlang_list {
+            item.drop_ref();
+        }
+        Ok(new_gc_ref)
+    } else if let Ok(_) = obj.downcast::<PyNone>() {
+        let xlang_none = XlangVMNull::new();
+        let new_gc_ref = gc_system.new_object(xlang_none);
+        Ok(new_gc_ref)
+    } else {
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Expected a xlang VM type or basic Python type for extraction",
+        ))
+    }
+}
 
 // Helper function to extract XlangGCRef from a PyObject holding one of our VM types
 // This function will need to be updated as more types are added or a more generic solution is found.
@@ -474,7 +605,8 @@ fn extract_xlang_gc_ref(obj: &Bound<'_, PyAny>) -> PyResult<XlangGCRef> {
 }
 
 // Helper function to convert XlangGCRef to a PyObject wrapper
-pub(crate) fn xlang_gc_ref_to_py_object( // Changed to pub(crate)
+pub(crate) fn xlang_gc_ref_to_py_object(
+    // Changed to pub(crate)
     gc_ref: &mut XlangGCRef, // Take ownership as we are creating a new Py wrapper
     gc_system_arc: Arc<RefCell<XlangGCSystem>>,
     py: Python,
@@ -562,8 +694,10 @@ impl VMKeyVal {
         py_value: PyObject,
         py: Python,
     ) -> PyResult<Self> {
-        let mut xlang_key_ref = extract_xlang_gc_ref(py_key.bind(py))?;
-        let mut xlang_value_ref = extract_xlang_gc_ref(py_value.bind(py))?;
+        let mut xlang_key_ref =
+            extract_xlang_gc_ref_with_gc_arc(py_key.bind(py), Arc::clone(&gc.gc_system))?;
+        let mut xlang_value_ref =
+            extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), Arc::clone(&gc.gc_system))?;
 
         let xlang_kv = XlangVMKeyVal::new(&mut xlang_key_ref, &mut xlang_value_ref);
         let new_gc_ref = gc.gc_system.borrow_mut().new_object(xlang_kv);
@@ -606,7 +740,8 @@ impl VMKeyVal {
     }
 
     fn set_key(&mut self, py_key: PyObject, py: Python) -> PyResult<()> {
-        let mut new_key_ref = extract_xlang_gc_ref(py_key.bind(py))?;
+        let mut new_key_ref =
+            extract_xlang_gc_ref_with_gc_arc(py_key.bind(py), self.gc_system.clone())?;
         let mut old_ref = self.gc_ref.as_type::<XlangVMKeyVal>().key.clone(); // Drop old key
         self.gc_ref.as_type::<XlangVMKeyVal>().key = new_key_ref.clone(); // Assign new key (takes ownership)
         self.gc_ref.get_traceable().add_reference(&mut new_key_ref);
@@ -621,7 +756,8 @@ impl VMKeyVal {
     }
 
     fn set_value(&mut self, py_value: PyObject, py: Python) -> PyResult<()> {
-        let mut new_value_ref = extract_xlang_gc_ref(py_value.bind(py))?;
+        let mut new_value_ref =
+            extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), self.gc_system.clone())?;
         let mut old_ref = self.gc_ref.as_type::<XlangVMKeyVal>().value.clone(); // Drop old key
         self.gc_ref.as_type::<XlangVMKeyVal>().value = new_value_ref.clone(); // Assign new key (takes ownership)
         self.gc_ref
@@ -710,8 +846,10 @@ impl VMNamed {
         py_value: PyObject,
         py: Python,
     ) -> PyResult<Self> {
-        let mut xlang_name_ref = extract_xlang_gc_ref(py_name.bind(py))?;
-        let mut xlang_value_ref = extract_xlang_gc_ref(py_value.bind(py))?;
+        let mut xlang_name_ref =
+            extract_xlang_gc_ref_with_gc_arc(py_name.bind(py), Arc::clone(&gc.gc_system))?;
+        let mut xlang_value_ref =
+            extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), Arc::clone(&gc.gc_system))?;
 
         let xlang_named = XlangVMNamed::new(&mut xlang_name_ref, &mut xlang_value_ref);
         let new_gc_ref = gc.gc_system.borrow_mut().new_object(xlang_named);
@@ -754,7 +892,8 @@ impl VMNamed {
     }
 
     fn set_name(&mut self, py_name: PyObject, py: Python) -> PyResult<()> {
-        let mut new_name_ref = extract_xlang_gc_ref(py_name.bind(py))?;
+        let mut new_name_ref =
+            extract_xlang_gc_ref_with_gc_arc(py_name.bind(py), self.gc_system.clone())?;
         let mut old_ref = self.gc_ref.as_type::<XlangVMNamed>().key.clone(); // Drop old key
         self.gc_ref.get_traceable().add_reference(&mut new_name_ref);
         self.gc_ref.get_traceable().remove_reference(&mut old_ref);
@@ -768,7 +907,8 @@ impl VMNamed {
     }
 
     fn set_value(&mut self, py_value: PyObject, py: Python) -> PyResult<()> {
-        let mut new_value_ref = extract_xlang_gc_ref(py_value.bind(py))?;
+        let mut new_value_ref =
+            extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), self.gc_system.clone())?;
         let mut old_ref = self.gc_ref.as_type::<XlangVMNamed>().value.clone(); // Drop old key
         self.gc_ref.as_type::<XlangVMNamed>().value = new_value_ref.clone(); // Assign new key (takes ownership)
         self.gc_ref
@@ -844,7 +984,10 @@ impl VMTuple {
     fn create(gc: &mut GCSystem, py_values: Vec<PyObject>, py: Python) -> PyResult<Self> {
         let mut xlang_refs_vec: Vec<XlangGCRef> = Vec::with_capacity(py_values.len());
         for py_obj in py_values {
-            xlang_refs_vec.push(extract_xlang_gc_ref(py_obj.bind(py))?);
+            xlang_refs_vec.push(extract_xlang_gc_ref_with_gc_arc(
+                py_obj.bind(py),
+                Arc::clone(&gc.gc_system),
+            )?);
         }
 
         // XlangVMTuple::new expects &mut Vec<&mut GCRef>
@@ -1020,7 +1163,8 @@ impl Drop for VMWrapper {
 impl VMWrapper {
     #[new]
     fn new(gc: &mut GCSystem, value: PyObject, py: Python) -> PyResult<Self> {
-        let mut xlang_ref = extract_xlang_gc_ref(value.bind(py))?;
+        let mut xlang_ref =
+            extract_xlang_gc_ref_with_gc_arc(value.bind(py), Arc::clone(&gc.gc_system))?;
         let wrapped = VMWrapper::create(gc, &mut xlang_ref);
         xlang_ref.drop_ref(); // Drop the cloned ref
         Ok(wrapped)
@@ -1032,7 +1176,8 @@ impl VMWrapper {
     }
 
     fn set_value(&mut self, value: PyObject, py: Python) -> PyResult<()> {
-        let mut new_value_ref = extract_xlang_gc_ref(value.bind(py))?;
+        let mut new_value_ref =
+            extract_xlang_gc_ref_with_gc_arc(value.bind(py), self.gc_system.clone())?;
         let mut old_ref = self.gc_ref.as_type::<XlangVMWrapper>().value_ref.clone(); // Drop old key
         self.gc_ref.as_type::<XlangVMWrapper>().value_ref = new_value_ref.clone(); // Assign new key (takes ownership)
         self.gc_ref
@@ -1226,7 +1371,8 @@ impl GCSystem {
     }
 
     fn new_wrapper(&mut self, value: PyObject, py: Python) -> PyResult<VMWrapper> {
-        let mut xlang_ref = extract_xlang_gc_ref(value.bind(py))?;
+        let mut xlang_ref =
+            extract_xlang_gc_ref_with_gc_arc(value.bind(py), Arc::clone(&self.gc_system))?;
         let wrapped = VMWrapper::create(self, &mut xlang_ref);
         xlang_ref.drop_ref(); // Drop the cloned ref
         Ok(wrapped)
@@ -1240,9 +1386,7 @@ impl GCSystem {
         VMRange::create(self, start, end)
     }
 
-    fn new_pyfunction(
-        &mut self,
-    ) -> WrappedPyFunction {
+    fn new_pyfunction(&mut self) -> WrappedPyFunction {
         WrappedPyFunction::create(self)
     }
 
@@ -1358,10 +1502,17 @@ impl GCSystem {
 }
 
 create_exception!(xlang_py, XlangSetupError, pyo3::exceptions::PyException);
-create_exception!(xlang_py, XlangCompilationError, pyo3::exceptions::PyException);
-create_exception!(xlang_py, XlangTranslationError, pyo3::exceptions::PyException);
+create_exception!(
+    xlang_py,
+    XlangCompilationError,
+    pyo3::exceptions::PyException
+);
+create_exception!(
+    xlang_py,
+    XlangTranslationError,
+    pyo3::exceptions::PyException
+);
 create_exception!(xlang_py, XlangExecutionError, pyo3::exceptions::PyException);
-
 
 // 修复模块导出
 #[pymodule(name = "xlang_py")]
@@ -1384,10 +1535,16 @@ fn my_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     // 添加异常类
     m.add("XlangSetupError", py.get_type::<XlangSetupError>())?;
-    m.add("XlangCompilationError", py.get_type::<XlangCompilationError>())?;
-    m.add("XlangTranslationError", py.get_type::<XlangTranslationError>())?;
+    m.add(
+        "XlangCompilationError",
+        py.get_type::<XlangCompilationError>(),
+    )?;
+    m.add(
+        "XlangTranslationError",
+        py.get_type::<XlangTranslationError>(),
+    )?;
     m.add("XlangExecutionError", py.get_type::<XlangExecutionError>())?;
-    
+
     // 添加模块级函数和常量
     m.add("__doc__", "XLang-Rust for python")?;
     m.add("VERSION", "0.1.0")?;

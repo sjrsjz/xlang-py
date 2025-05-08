@@ -1,10 +1,9 @@
 use std::{cell::RefCell, sync::Arc};
 
 use crate::{
-    extract_xlang_gc_ref, xlang_gc_ref_to_py_object, GCSystem, VMTuple, XlangCompilationError,
-    XlangExecutionError,
+    extract_xlang_gc_ref_with_gc, extract_xlang_gc_ref_with_gc_arc, xlang_gc_ref_to_py_object, GCSystem, VMTuple, XlangCompilationError, XlangExecutionError
 };
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyString, PyTuple};
 use pyo3::{exceptions::PyIOError, prelude::*};
 use xlang_frontend::{compile::build_code, dir_stack::DirStack};
 use xlang_vm_core::executor::vm::VMCoroutinePool;
@@ -96,13 +95,13 @@ impl Lambda {
         }
 
         let mut capture_ref_option: Option<GCRef> = if let Some(c) = capture {
-            Some(extract_xlang_gc_ref(&c.into_bound(py))?)
+            Some(extract_xlang_gc_ref_with_gc_arc(&c.into_bound(py), self.gc_system.clone())?)
         } else {
             None
         };
 
         let mut self_object_ref_option: Option<GCRef> = if let Some(s) = self_object {
-            Some(extract_xlang_gc_ref(&s.into_bound(py))?)
+            Some(extract_xlang_gc_ref_with_gc_arc(&s.into_bound(py), self.gc_system.clone())?)
         } else {
             None
         };
@@ -152,8 +151,9 @@ impl Lambda {
         let mut args_vec = Vec::with_capacity(args_vec_ref.len());
 
         for arg in args_vec_ref.iter() {
-            args_vec.push(extract_xlang_gc_ref(
+            args_vec.push(extract_xlang_gc_ref_with_gc_arc(
                 &arg.extract::<PyObject>(py).unwrap().into_bound(py),
+                self.gc_system.clone(),
             )?);
         }
 
@@ -169,7 +169,7 @@ impl Lambda {
                     .borrow_mut()
                     .new_object(XLangVMString::new(&key.extract::<String>().unwrap()));
                 let mut value_ref =
-                    extract_xlang_gc_ref(&value.extract::<PyObject>().unwrap().into_bound(py))?;
+                    extract_xlang_gc_ref_with_gc_arc(&value.extract::<PyObject>().unwrap().into_bound(py), self.gc_system.clone())?;
 
                 let mut keyval = self
                     .gc_system
@@ -328,11 +328,12 @@ impl WrappedPyFunction {
         let _ = Arc::clone(&gc_system_arc);
 
         // 定义静态函数
+        #[allow(deprecated)]
         fn py_function_static(
             _self_object: Option<&mut GCRef>,
             capture: Option<&mut GCRef>,
             args: &mut GCRef,
-            _gc_system: &mut XlangGCSystem,
+            gc_system: &mut XlangGCSystem,
         ) -> Result<GCRef, VMVariableError> {
             if capture.is_none() {
                 return Err(VMVariableError::TypeError(
@@ -358,10 +359,6 @@ impl WrappedPyFunction {
             let gc_system_arc =
                 unsafe { Arc::from_raw(context.cloned_gc_arc as *const RefCell<XlangGCSystem>) };
 
-            // 确保Arc不会被提前释放
-            let callable_ref_clone = Arc::clone(&callable_ref);
-            let gc_system_arc_clone = Arc::clone(&gc_system_arc);
-
             Python::with_gil(|py| {
                 // 确保参数是一个元组
                 if !args.isinstance::<XLangVMTuple>() {
@@ -376,9 +373,39 @@ impl WrappedPyFunction {
                 let mut py_args = Vec::new();
 
                 // 将XLang参数转换为Python对象
+                // 将XLang参数转换为Python对象
                 for arg_ref in &mut args_tuple.values {
-                    let py_arg =
-                        match xlang_gc_ref_to_py_object(arg_ref, gc_system_arc_clone.clone(), py) {
+                    if arg_ref.isinstance::<XLangVMNamed>() {
+                        // 解包 VMNamed 为键值对
+                        let named = arg_ref.as_type::<XLangVMNamed>();
+                        if !named.key.isinstance::<XLangVMString>() {
+                            return Err(VMVariableError::TypeError(
+                                arg_ref.clone_ref(),
+                                "expected string for named argument".to_string(),
+                            ));
+                        }
+                        let key = named.key.as_type::<XLangVMString>().value.clone();
+                        let py_key = PyString::new(py, &key).to_object(py);
+                        let py_value = match xlang_gc_ref_to_py_object(
+                            &mut named.value,
+                            gc_system_arc.clone(),
+                            py,
+                        ) {
+                            Ok(obj) => obj,
+                            Err(e) => {
+                                return Err(VMVariableError::DetailedError(format!(
+                                    "Failed to convert VMNamed value to Python: {}",
+                                    e
+                                )));
+                            }
+                        };
+                        py_args.push((py_key, py_value).to_object(py));
+                    } else {
+                        let py_arg = match xlang_gc_ref_to_py_object(
+                            arg_ref,
+                            gc_system_arc.clone(),
+                            py,
+                        ) {
                             Ok(obj) => obj,
                             Err(e) => {
                                 return Err(VMVariableError::DetailedError(format!(
@@ -387,7 +414,8 @@ impl WrappedPyFunction {
                                 )));
                             }
                         };
-                    py_args.push(py_arg);
+                        py_args.push(py_arg);
+                    }
                 }
 
                 // 调用Python函数
@@ -400,10 +428,10 @@ impl WrappedPyFunction {
                         )));
                     }
                 };
-                match callable_ref_clone.call1(py, py_tuple) {
+                match callable_ref.call1(py, py_tuple) {
                     Ok(py_result) => {
                         let bound_result = py_result.into_bound(py);
-                        extract_xlang_gc_ref(&bound_result).map_err(|e| {
+                        extract_xlang_gc_ref_with_gc(&bound_result, gc_system).map_err(|e| {
                             VMVariableError::DetailedError(format!(
                                 "Failed to convert Python result to XLang: {}",
                                 e

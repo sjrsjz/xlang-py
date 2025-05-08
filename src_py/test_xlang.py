@@ -163,23 +163,21 @@ class TestXLang(unittest.TestCase):
         )
 
         self.assertEqual(
-            xlang_lambda(
-                kwargs={"A": self.gc.new_int(1), "B": self.gc.new_int(2)}
-            ).get_value(),
+            xlang_lambda(kwargs={"A": 1, "B": 2}).get_value(),
             3,
         )
 
     def test_py_function(self):
         def py_func(a, b):
-            return a + b
+            return a[1].get_value() + b[1].get_value()
 
         wrapped_func = self.gc.new_pyfunction()
         wrapped_func.wrap(
             py_func,
             self.gc.new_tuple(
                 [
-                    self.gc.new_named(self.gc.new_string("a"), self.gc.new_int(0)),
-                    self.gc.new_named(self.gc.new_string("b"), self.gc.new_int(0)),
+                    self.gc.new_named("a", 1),
+                    self.gc.new_named("b", 2),
                 ]
             ),
         )
@@ -194,9 +192,7 @@ class TestXLang(unittest.TestCase):
         )
 
         self.assertEqual(
-            xlang_lambda(
-                kwargs={"add": wrapped_func}
-            ).get_value(),
+            xlang_lambda(kwargs={"add": wrapped_func}).get_value(),
             3,
         )
 
