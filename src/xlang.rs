@@ -18,8 +18,6 @@ use xlang_vm_core::executor::variable::VMNull as XLangVMNull;
 use xlang_vm_core::executor::variable::VMString as XLangVMString;
 use xlang_vm_core::executor::variable::{VMInstructions, VMTuple as XLangVMTuple};
 use xlang_vm_core::executor::variable::{VMLambda as XLangVMLambda, VMVariableError};
-use pyo3::types::IntoPyDict;
-use pyo3::Python;
 
 #[pyclass(unsendable)]
 #[derive(Clone)]
@@ -313,83 +311,30 @@ impl WrappedPyFunction {
             old_function.drop_ref();
             self.function_object = None;
         }
-        #[cfg(test)]
-        mod tests {
-            use super::*;
 
-            #[test]
-            fn test_lambda_creation() {
-                let mut gc_system = GCSystem::default();
-                let lambda = Lambda::new(&mut gc_system);
-                assert!(lambda.lambda_object.is_none());
-            }
+        // 将Python可调用对象存储在Arc中以安全地在多个地方共享
+        let callable_ref = Arc::new(PyObject::from(py_callable));
+        let gc_system_arc = Arc::clone(&self.gc_system);
 
-            #[test]
-            fn test_lambda_load_and_call() {
-                Python::with_gil(|py| {
-                    let mut gc_system = GCSystem::default();
-                    let mut lambda = Lambda::new(&mut gc_system);
+        // 创建上下文并序列化为字节
+        let context = PackedCallableContext {
+            callable_ref: Arc::as_ptr(&callable_ref) as usize, // 将Arc的裸指针存储为整数
+            cloned_gc_arc: Arc::as_ptr(&gc_system_arc) as usize, // 同样处理gc_system_arc
+        };
+        let serialized_context = bincode::serialize(&context).unwrap();
 
-                    let code = r#"
-        def add(a, b):
-            return a + b
-        "#;
+        // 确保Arc不会被提前释放
+        let _ = Arc::clone(&callable_ref);
+        let _ = Arc::clone(&gc_system_arc);
 
-                    let mut default_args = VMTuple::new(vec![]);
-                    let result = lambda.load(code, &mut default_args, None, None, None, py);
-                    assert!(result.is_ok());
-
-                    let args = vec![1.into_py(py), 2.into_py(py)];
-                    let result = lambda.__call__(Some(args), None, py);
-                    assert!(result.is_ok());
-                    assert_eq!(result.unwrap().extract::<i32>(py).unwrap(), 3);
-                });
-            }
-
-            #[test]
-            fn test_wrapped_py_function() {
-                Python::with_gil(|py| {
-                    let mut gc_system = GCSystem::default();
-                    let mut wrapped_function = WrappedPyFunction::new(&mut gc_system);
-
-                    let py_callable = py.eval("lambda x, y: x * y", None, None).unwrap();
-                    let mut default_args = VMTuple::new(vec![]);
-                    let result = wrapped_function.wrap(py_callable.to_object(py), &mut default_args, py);
-                    assert!(result.is_ok());
-
-                    let args = vec![3.into_py(py), 4.into_py(py)];
-                    let mut args_tuple = gc_system.new_object(XLangVMTuple::new(&mut args.iter().collect()));
-                    let result = wrapped_function
-                        .function_object
-                        .as_ref()
-                        .unwrap()
-                        .as_type::<XLangVMLambda>()
-                        .call(None, None, &mut args_tuple, &mut gc_system.gc_system.borrow_mut());
-                    assert!(result.is_ok());
-                    assert_eq!(result.unwrap().as_type::<XLangVMNull>().value, 12);
-                });
-            }
-
-            #[test]
-            fn test_lambda_repr() {
-                let mut gc_system = GCSystem::default();
-                let lambda = Lambda::new(&mut gc_system);
-                Python::with_gil(|py| {
-                    let repr = lambda.__repr__(py);
-                    assert!(repr.is_err());
-                });
-            }
-
-            #[test]
-            fn test_wrapped_function_repr() {
-                let mut gc_system = GCSystem::default();
-                let wrapped_function = WrappedPyFunction::new(&mut gc_system);
-                Python::with_gil(|py| {
-                    let repr = wrapped_function.__repr__(py);
-                    assert!(repr.is_err());
-                });
-            }
-        }
+        // 定义静态函数
+        fn py_function_static(
+            _self_object: Option<&mut GCRef>,
+            capture: Option<&mut GCRef>,
+            args: &mut GCRef,
+            _gc_system: &mut XlangGCSystem,
+        ) -> Result<GCRef, VMVariableError> {
+            if capture.is_none() {
                 return Err(VMVariableError::TypeError(
                     args.clone_ref(),
                     "missing captured context".to_string(),
