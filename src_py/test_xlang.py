@@ -17,6 +17,7 @@ from xlang_py import (
     VMNull,
     VMBytes,
     Lambda,
+    WrappedPyFunction,
 )
 
 
@@ -153,21 +154,50 @@ class TestXLang(unittest.TestCase):
     def test_xlang(self):
         xlang_lambda = self.gc.new_lambda()
         xlang_lambda.load(
-            code = """
+            code="""
                 @required A; 
                 @required B;
                 A + B
-                """, 
-            default_args = self.gc.new_tuple([])
+                """,
+            default_args=self.gc.new_tuple([]),
         )
+
         self.assertEqual(
             xlang_lambda(
-                kwargs = {
-                    "A": self.gc.new_int(1), 
-                    "B": self.gc.new_int(2)
-                }
+                kwargs={"A": self.gc.new_int(1), "B": self.gc.new_int(2)}
             ).get_value(),
-            3
+            3,
+        )
+
+    def test_py_function(self):
+        def py_func(a, b):
+            return a + b
+
+        wrapped_func = self.gc.new_pyfunction()
+        wrapped_func.wrap(
+            py_func,
+            self.gc.new_tuple(
+                [
+                    self.gc.new_named(self.gc.new_string("a"), self.gc.new_int(0)),
+                    self.gc.new_named(self.gc.new_string("b"), self.gc.new_int(0)),
+                ]
+            ),
+        )
+
+        xlang_lambda = self.gc.new_lambda()
+        xlang_lambda.load(
+            code="""
+                @required add; 
+                add(1, 2)
+                """,
+            default_args=self.gc.new_tuple([]),
+        )
+
+        self.assertEqual(
+            xlang_lambda(
+                kwargs={"add": wrapped_func}
+            ).get_value(),
+            3,
         )
 
     def __del__(self):

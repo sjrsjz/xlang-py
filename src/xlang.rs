@@ -4,19 +4,22 @@ use crate::{
     extract_xlang_gc_ref, xlang_gc_ref_to_py_object, GCSystem, VMTuple, XlangCompilationError,
     XlangExecutionError,
 };
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyTuple};
 use pyo3::{exceptions::PyIOError, prelude::*};
 use xlang_frontend::{compile::build_code, dir_stack::DirStack};
 use xlang_vm_core::executor::vm::VMCoroutinePool;
 use xlang_vm_core::gc::{GCRef, GCSystem as XlangGCSystem};
 use xlang_vm_core::ir_translator::IRTranslator;
 
-use xlang_vm_core::executor::variable::VMLambda as XLangVMLambda;
+use xlang_vm_core::executor::variable::VMBytes as XLangVMBytes;
 use xlang_vm_core::executor::variable::VMLambdaBody as XLangVMLambdaBody;
 use xlang_vm_core::executor::variable::VMNamed as XLangVMNamed;
 use xlang_vm_core::executor::variable::VMNull as XLangVMNull;
 use xlang_vm_core::executor::variable::VMString as XLangVMString;
 use xlang_vm_core::executor::variable::{VMInstructions, VMTuple as XLangVMTuple};
+use xlang_vm_core::executor::variable::{VMLambda as XLangVMLambda, VMVariableError};
+use pyo3::types::IntoPyDict;
+use pyo3::Python;
 
 #[pyclass(unsendable)]
 #[derive(Clone)]
@@ -208,6 +211,9 @@ impl Lambda {
                 {
                     let mut e = coro_id.err().unwrap();
                     e.consume_ref();
+                    for arg in args_vec.iter_mut() {
+                        arg.drop_ref();
+                    }
                     e.to_string()
                 }
             )));
@@ -221,6 +227,9 @@ impl Lambda {
                 {
                     let mut e = result.err().unwrap();
                     e.consume_ref();
+                    for arg in args_vec.iter_mut() {
+                        arg.drop_ref();
+                    }
                     e.to_string()
                 }
             )));
@@ -240,5 +249,266 @@ impl Lambda {
         let py_object = xlang_gc_ref_to_py_object(result, self.gc_system.clone(), py)?;
 
         Ok(py_object)
+    }
+
+    fn __repr__(&self, _py: Python<'_>) -> PyResult<String> {
+        if self.lambda_object.is_none() {
+            return Err(XlangExecutionError::new_err(format!(
+                "Lambda object is not initialized"
+            )));
+        }
+        let lambda = self.lambda_object.as_ref().unwrap();
+        let repr = format!("<xlang lambda object at {:p}>", lambda);
+        Ok(repr)
+    }
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone)]
+pub struct WrappedPyFunction {
+    pub(crate) gc_system: Arc<RefCell<XlangGCSystem>>,
+    pub(crate) function_object: Option<GCRef>,
+}
+
+impl WrappedPyFunction {
+    pub(crate) fn create(gc: &mut GCSystem) -> Self {
+        WrappedPyFunction {
+            function_object: None,
+            gc_system: Arc::clone(&gc.gc_system),
+        }
+    }
+}
+
+impl Drop for WrappedPyFunction {
+    fn drop(&mut self) {
+        if let Some(ref mut function) = self.function_object {
+            function.drop_ref();
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PackedCallableContext {
+    callable_ref: usize,  // 使用整数代替裸指针
+    cloned_gc_arc: usize, // 同样使用整数代替裸指针
+}
+
+#[pymethods]
+impl WrappedPyFunction {
+    #[new]
+    fn new(gc: &mut GCSystem) -> Self {
+        WrappedPyFunction {
+            function_object: None,
+            gc_system: Arc::clone(&gc.gc_system),
+        }
+    }
+
+    fn wrap(
+        &mut self,
+        py_callable: PyObject,
+        default_args: &mut VMTuple,
+        _py: Python<'_>,
+    ) -> PyResult<()> {
+        // 释放旧引用(如果有的话)
+        if let Some(ref mut old_function) = self.function_object {
+            old_function.drop_ref();
+            self.function_object = None;
+        }
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            #[test]
+            fn test_lambda_creation() {
+                let mut gc_system = GCSystem::default();
+                let lambda = Lambda::new(&mut gc_system);
+                assert!(lambda.lambda_object.is_none());
+            }
+
+            #[test]
+            fn test_lambda_load_and_call() {
+                Python::with_gil(|py| {
+                    let mut gc_system = GCSystem::default();
+                    let mut lambda = Lambda::new(&mut gc_system);
+
+                    let code = r#"
+        def add(a, b):
+            return a + b
+        "#;
+
+                    let mut default_args = VMTuple::new(vec![]);
+                    let result = lambda.load(code, &mut default_args, None, None, None, py);
+                    assert!(result.is_ok());
+
+                    let args = vec![1.into_py(py), 2.into_py(py)];
+                    let result = lambda.__call__(Some(args), None, py);
+                    assert!(result.is_ok());
+                    assert_eq!(result.unwrap().extract::<i32>(py).unwrap(), 3);
+                });
+            }
+
+            #[test]
+            fn test_wrapped_py_function() {
+                Python::with_gil(|py| {
+                    let mut gc_system = GCSystem::default();
+                    let mut wrapped_function = WrappedPyFunction::new(&mut gc_system);
+
+                    let py_callable = py.eval("lambda x, y: x * y", None, None).unwrap();
+                    let mut default_args = VMTuple::new(vec![]);
+                    let result = wrapped_function.wrap(py_callable.to_object(py), &mut default_args, py);
+                    assert!(result.is_ok());
+
+                    let args = vec![3.into_py(py), 4.into_py(py)];
+                    let mut args_tuple = gc_system.new_object(XLangVMTuple::new(&mut args.iter().collect()));
+                    let result = wrapped_function
+                        .function_object
+                        .as_ref()
+                        .unwrap()
+                        .as_type::<XLangVMLambda>()
+                        .call(None, None, &mut args_tuple, &mut gc_system.gc_system.borrow_mut());
+                    assert!(result.is_ok());
+                    assert_eq!(result.unwrap().as_type::<XLangVMNull>().value, 12);
+                });
+            }
+
+            #[test]
+            fn test_lambda_repr() {
+                let mut gc_system = GCSystem::default();
+                let lambda = Lambda::new(&mut gc_system);
+                Python::with_gil(|py| {
+                    let repr = lambda.__repr__(py);
+                    assert!(repr.is_err());
+                });
+            }
+
+            #[test]
+            fn test_wrapped_function_repr() {
+                let mut gc_system = GCSystem::default();
+                let wrapped_function = WrappedPyFunction::new(&mut gc_system);
+                Python::with_gil(|py| {
+                    let repr = wrapped_function.__repr__(py);
+                    assert!(repr.is_err());
+                });
+            }
+        }
+                return Err(VMVariableError::TypeError(
+                    args.clone_ref(),
+                    "missing captured context".to_string(),
+                ));
+            }
+            let capture_ref = capture.unwrap();
+            if !capture_ref.isinstance::<XLangVMBytes>() {
+                return Err(VMVariableError::TypeError(
+                    args.clone_ref(),
+                    "expected bytes for captured context".to_string(),
+                ));
+            }
+            let capture_bytes = capture_ref.as_type::<XLangVMBytes>();
+
+            // 解包上下文
+            let context: PackedCallableContext =
+                bincode::deserialize(&capture_bytes.value).unwrap();
+
+            // 重新构造Arc
+            let callable_ref = unsafe { Arc::from_raw(context.callable_ref as *const PyObject) };
+            let gc_system_arc =
+                unsafe { Arc::from_raw(context.cloned_gc_arc as *const RefCell<XlangGCSystem>) };
+
+            // 确保Arc不会被提前释放
+            let callable_ref_clone = Arc::clone(&callable_ref);
+            let gc_system_arc_clone = Arc::clone(&gc_system_arc);
+
+            Python::with_gil(|py| {
+                // 确保参数是一个元组
+                if !args.isinstance::<XLangVMTuple>() {
+                    return Err(VMVariableError::TypeError(
+                        args.clone_ref(),
+                        "expected tuple for arguments".to_string(),
+                    ));
+                }
+
+                // 获取传递给函数的参数列表
+                let args_tuple = args.as_type::<XLangVMTuple>();
+                let mut py_args = Vec::new();
+
+                // 将XLang参数转换为Python对象
+                for arg_ref in &mut args_tuple.values {
+                    let py_arg =
+                        match xlang_gc_ref_to_py_object(arg_ref, gc_system_arc_clone.clone(), py) {
+                            Ok(obj) => obj,
+                            Err(e) => {
+                                return Err(VMVariableError::DetailedError(format!(
+                                    "Failed to convert argument to Python: {}",
+                                    e
+                                )));
+                            }
+                        };
+                    py_args.push(py_arg);
+                }
+
+                // 调用Python函数
+                let py_tuple = match PyTuple::new(py, &py_args) {
+                    Ok(tuple) => tuple,
+                    Err(e) => {
+                        return Err(VMVariableError::DetailedError(format!(
+                            "Failed to create Python tuple: {}",
+                            e
+                        )));
+                    }
+                };
+                match callable_ref_clone.call1(py, py_tuple) {
+                    Ok(py_result) => {
+                        let bound_result = py_result.into_bound(py);
+                        extract_xlang_gc_ref(&bound_result).map_err(|e| {
+                            VMVariableError::DetailedError(format!(
+                                "Failed to convert Python result to XLang: {}",
+                                e
+                            ))
+                        })
+                    }
+                    Err(e) => Err(VMVariableError::DetailedError(format!(
+                        "Python function call failed: {}",
+                        e
+                    ))),
+                }
+            })
+        }
+
+        // 创建一个新的XLang函数对象
+        let mut packed_context = self
+            .gc_system
+            .borrow_mut()
+            .new_object(XLangVMBytes::new(&serialized_context));
+
+        let mut default_result = self.gc_system.borrow_mut().new_object(XLangVMNull::new());
+        let function_object = self.gc_system.borrow_mut().new_object(XLangVMLambda::new(
+            0,
+            "<python>".to_string(),
+            &mut default_args.gc_ref,
+            Some(&mut packed_context),
+            None,
+            &mut XLangVMLambdaBody::VMNativeFunction(py_function_static),
+            &mut default_result,
+            false,
+        ));
+        default_result.drop_ref();
+        packed_context.drop_ref();
+
+        self.function_object = Some(function_object);
+
+        // 确保Arc不会被提前释放
+        std::mem::forget(callable_ref);
+        std::mem::forget(gc_system_arc);
+
+        Ok(())
+    }
+    fn __repr__(&self, _py: Python<'_>) -> PyResult<String> {
+        if self.function_object.is_none() {
+            return Err(XlangExecutionError::new_err(format!(
+                "Function object is not initialized"
+            )));
+        }
+        let function = self.function_object.as_ref().unwrap();
+        let repr = format!("<xlang wrapped function object at {:p}>", function);
+        Ok(repr)
     }
 }

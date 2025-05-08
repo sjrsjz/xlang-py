@@ -8,6 +8,8 @@ name = "xlang_py"
 crate-type = ["cdylib"]
 
 [dependencies]
+bincode = "1.3.3"
 pyo3 = { version = "0.24.2", features = ["extension-module"] }
+serde = "1.0.219"
 xlang_frontend = "0.1.4"
 xlang_vm_core = "0.1.3"

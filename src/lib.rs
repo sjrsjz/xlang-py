@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use pyo3::{create_exception, prelude::*};
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString};
-use xlang::Lambda;
+use xlang::{Lambda, WrappedPyFunction};
 use xlang_vm_core::executor::variable::{
     VMBytes as XlangVMBytes, VMFloat as XlangVMFloat, VMInt as XlangVMInt,
     VMKeyVal as XlangVMKeyVal, VMNamed as XlangVMNamed, VMNull as XlangVMNull,
@@ -456,6 +456,16 @@ fn extract_xlang_gc_ref(obj: &Bound<'_, PyAny>) -> PyResult<XlangGCRef> {
         Ok(vm_wrapper.gc_ref.clone_ref())
     } else if let Ok(mut vm_range) = obj.extract::<PyRefMut<VMRange>>() {
         Ok(vm_range.gc_ref.clone_ref())
+    } else if let Ok(mut vm_wrapped_pyfunction) = obj.extract::<PyRefMut<WrappedPyFunction>>() {
+        match &mut vm_wrapped_pyfunction.function_object {
+            Some(wrapped) => {
+                let xlang_ref = wrapped.clone_ref();
+                Ok(xlang_ref)
+            }
+            None => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "WrappedPyFunction is None",
+            )),
+        }
     } else {
         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
             "Expected a xlang VM type for extraction",
@@ -1230,6 +1240,12 @@ impl GCSystem {
         VMRange::create(self, start, end)
     }
 
+    fn new_pyfunction(
+        &mut self,
+    ) -> WrappedPyFunction {
+        WrappedPyFunction::create(self)
+    }
+
     /// Internal helper: Converts a Python object to its corresponding xlang VM object,
     /// wrapped as a PyObject.
     #[allow(deprecated)]
@@ -1363,6 +1379,7 @@ fn my_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VMRange>()?;
 
     m.add_class::<Lambda>()?;
+    m.add_class::<WrappedPyFunction>()?;
 
     let py = m.py();
     // 添加异常类
