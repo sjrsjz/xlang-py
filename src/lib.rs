@@ -63,14 +63,17 @@ impl GCRef for VMInt {
 #[pymethods]
 impl VMInt {
     #[new]
+    #[pyo3(text_signature = "($cls, gc, value)")]
     fn new(gc: &mut GCSystem, value: i64) -> Self {
         VMInt::create(gc, value)
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn get_value(&self) -> i64 {
         self.gc_ref.as_const_type::<XlangVMInt>().value
     }
 
+    #[pyo3(text_signature = "($self, value)")]
     fn set_value(&mut self, value: i64) {
         self.gc_ref.as_type::<XlangVMInt>().value = value;
     }
@@ -83,6 +86,7 @@ impl VMInt {
         Ok(format!("{}", self.get_value()))
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn clone(&mut self) -> Self {
         let value = XlangVMInt::new(self.get_value());
         let gc_ref = self.gc_system.borrow_mut().new_object(value);
@@ -92,6 +96,7 @@ impl VMInt {
         };
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_py(&self, py: Python) -> PyResult<PyObject> {
         let value = self.get_value();
         let py_int = PyInt::new(py, value);
@@ -143,14 +148,17 @@ impl GCRef for VMFloat {
 #[pymethods]
 impl VMFloat {
     #[new]
+    #[pyo3(text_signature = "($cls, gc, value)")]
     fn new(gc: &mut GCSystem, value: f64) -> Self {
         VMFloat::create(gc, value)
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn get_value(&self) -> f64 {
         self.gc_ref.as_const_type::<XlangVMFloat>().value
     }
 
+    #[pyo3(text_signature = "($self, value)")]
     fn set_value(&mut self, value: f64) {
         self.gc_ref.as_type::<XlangVMFloat>().value = value;
     }
@@ -162,6 +170,7 @@ impl VMFloat {
         Ok(format!("{}", self.get_value()))
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn clone(&mut self) -> Self {
         let value = XlangVMFloat::new(self.get_value());
         let gc_ref = self.gc_system.borrow_mut().new_object(value);
@@ -171,6 +180,7 @@ impl VMFloat {
         };
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_py(&self, py: Python) -> PyResult<PyObject> {
         let value = self.get_value();
         let py_float = PyFloat::new(py, value);
@@ -222,14 +232,17 @@ impl GCRef for VMString {
 #[pymethods]
 impl VMString {
     #[new]
+    #[pyo3(text_signature = "($cls, gc, value)")]
     fn new(gc: &mut GCSystem, value: String) -> Self {
         VMString::create(gc, value)
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn get_value(&self) -> String {
         self.gc_ref.as_const_type::<XlangVMString>().value.clone()
     }
 
+    #[pyo3(text_signature = "($self, value)")]
     fn set_value(&mut self, value: String) {
         self.gc_ref.as_type::<XlangVMString>().value = value;
     }
@@ -254,6 +267,7 @@ impl VMString {
         };
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_py(&self, py: Python) -> PyResult<PyObject> {
         let value = self.get_value();
         let py_str = PyString::new(py, &value);
@@ -302,6 +316,7 @@ impl GCRef for VMNull {
 #[pymethods]
 impl VMNull {
     #[new]
+    #[pyo3(text_signature = "($cls, gc)")]
     fn new(gc: &mut GCSystem) -> Self {
         VMNull::create(gc)
     }
@@ -313,6 +328,7 @@ impl VMNull {
         Ok("None".to_string())
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn clone(&mut self) -> Self {
         let gc_ref = self.gc_system.borrow_mut().new_object(XlangVMNull::new());
         return VMNull {
@@ -321,6 +337,7 @@ impl VMNull {
         };
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_py(&self, py: Python) -> PyResult<PyObject> {
         let py_none = py.None();
         Ok(py_none.into())
@@ -371,14 +388,17 @@ impl GCRef for VMBytes {
 #[pymethods]
 impl VMBytes {
     #[new]
+    #[pyo3(text_signature = "($cls, gc, value)")]
     fn new(gc: &mut GCSystem, value: Vec<u8>) -> Self {
         VMBytes::create(gc, value)
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn get_value(&self) -> Vec<u8> {
         self.gc_ref.as_const_type::<XlangVMBytes>().value.clone()
     }
 
+    #[pyo3(text_signature = "($self, value)")]
     fn set_value(&mut self, value: Vec<u8>) {
         self.gc_ref.as_type::<XlangVMBytes>().value = value;
     }
@@ -411,6 +431,7 @@ impl VMBytes {
         self.gc_ref.as_const_type::<XlangVMBytes>().value.len()
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn clone(&mut self) -> Self {
         let value = XlangVMBytes::new(&self.get_value());
         let gc_ref = self.gc_system.borrow_mut().new_object(value);
@@ -420,6 +441,7 @@ impl VMBytes {
         };
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_py(&self, py: Python) -> PyResult<PyObject> {
         let value = self.get_value();
         let py_bytes = PyBytes::new(py, &value);
@@ -730,15 +752,18 @@ impl GCRef for VMKeyVal {
 #[pymethods]
 impl VMKeyVal {
     #[new]
+    #[pyo3(text_signature = "($cls, gc, key, value, py)")]
     fn new(gc: &mut GCSystem, key: PyObject, value: PyObject, py: Python) -> PyResult<Self> {
         VMKeyVal::create(gc, key, value, py)
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn get_key(&mut self, py: Python) -> PyResult<PyObject> {
         let xlang_kv = self.gc_ref.as_type::<XlangVMKeyVal>();
         xlang_gc_ref_to_py_object(&mut xlang_kv.key, self.gc_system.clone(), py)
     }
 
+    #[pyo3(text_signature = "($self, py_key, py)")]
     fn set_key(&mut self, py_key: PyObject, py: Python) -> PyResult<()> {
         let mut new_key_ref =
             extract_xlang_gc_ref_with_gc_arc(py_key.bind(py), self.gc_system.clone())?;
@@ -750,11 +775,13 @@ impl VMKeyVal {
         Ok(())
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn get_value(&mut self, py: Python) -> PyResult<PyObject> {
         let xlang_kv = self.gc_ref.as_type::<XlangVMKeyVal>();
         xlang_gc_ref_to_py_object(&mut xlang_kv.value, self.gc_system.clone(), py)
     }
 
+    #[pyo3(text_signature = "($self, py_value, py)")]
     fn set_value(&mut self, py_value: PyObject, py: Python) -> PyResult<()> {
         let mut new_value_ref =
             extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), self.gc_system.clone())?;
@@ -790,6 +817,7 @@ impl VMKeyVal {
         Ok(format!("{} : {}", key_str, value_str))
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn clone(&mut self, _py: Python) -> PyResult<Self> {
         let xlang_kv_orig = self.gc_ref.as_type::<XlangVMKeyVal>();
 
@@ -816,6 +844,7 @@ impl VMKeyVal {
         })
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_py(&mut self, py: Python) -> PyResult<PyObject> {
         let xlang_kv = self.gc_ref.as_type::<XlangVMKeyVal>();
         let key_obj = xlang_gc_ref_to_py_object(&mut xlang_kv.key, self.gc_system.clone(), py)?;
@@ -882,15 +911,18 @@ impl GCRef for VMNamed {
 #[pymethods]
 impl VMNamed {
     #[new]
+    #[pyo3(text_signature = "($cls, gc, name, value, py)")]
     fn new(gc: &mut GCSystem, name: PyObject, value: PyObject, py: Python) -> PyResult<Self> {
         VMNamed::create(gc, name, value, py)
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn get_name(&mut self, py: Python) -> PyResult<PyObject> {
         let xlang_named = self.gc_ref.as_type::<XlangVMNamed>();
         xlang_gc_ref_to_py_object(&mut xlang_named.key, self.gc_system.clone(), py)
     }
 
+    #[pyo3(text_signature = "($self, py_name, py)")]
     fn set_name(&mut self, py_name: PyObject, py: Python) -> PyResult<()> {
         let mut new_name_ref =
             extract_xlang_gc_ref_with_gc_arc(py_name.bind(py), self.gc_system.clone())?;
@@ -901,11 +933,13 @@ impl VMNamed {
         Ok(())
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn get_value(&mut self, py: Python) -> PyResult<PyObject> {
         let xlang_named = self.gc_ref.as_type::<XlangVMNamed>();
         xlang_gc_ref_to_py_object(&mut xlang_named.value, self.gc_system.clone(), py)
     }
 
+    #[pyo3(text_signature = "($self, py_value, py)")]
     fn set_value(&mut self, py_value: PyObject, py: Python) -> PyResult<()> {
         let mut new_value_ref =
             extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), self.gc_system.clone())?;
@@ -942,6 +976,7 @@ impl VMNamed {
         let value_str = value_obj.bind(py).str()?.extract::<String>()?;
         Ok(format!("{} => {}", name_str, value_str))
     }
+    #[pyo3(text_signature = "($self, py)")]
     fn clone(&mut self, _py: Python) -> PyResult<Self> {
         // Similar to VMKeyVal, this is a shallow clone of the structure for now.
         let xlang_named_orig = self.gc_ref.as_type::<XlangVMNamed>();
@@ -956,6 +991,7 @@ impl VMNamed {
         })
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_py(&mut self, py: Python) -> PyResult<PyObject> {
         let xlang_named = self.gc_ref.as_type::<XlangVMNamed>();
         let name_obj = xlang_gc_ref_to_py_object(&mut xlang_named.key, self.gc_system.clone(), py)?;
@@ -1028,6 +1064,7 @@ impl GCRef for VMTuple {
 #[pymethods]
 impl VMTuple {
     #[new]
+    #[pyo3(text_signature = "($cls, gc, values, py)")]
     fn new(gc: &mut GCSystem, values: Vec<PyObject>, py: Python) -> PyResult<Self> {
         VMTuple::create(gc, values, py)
     }
@@ -1048,6 +1085,7 @@ impl VMTuple {
         }
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_list(&mut self, py: Python) -> PyResult<Vec<PyObject>> {
         let xlang_tuple = self.gc_ref.as_type::<XlangVMTuple>();
         let mut py_list = Vec::with_capacity(xlang_tuple.values.len());
@@ -1090,6 +1128,7 @@ impl VMTuple {
         }
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn clone(&mut self, _py: Python) -> PyResult<Self> {
         // This will be a shallow clone of the tuple structure, elements are shared.
         // For a deep clone, each element would need to be cloned.
@@ -1104,6 +1143,7 @@ impl VMTuple {
         })
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_py(&mut self, py: Python) -> PyResult<PyObject> {
         let xlang_tuple = self.gc_ref.as_type::<XlangVMTuple>();
         let py_tuple = PyList::empty(py);
@@ -1162,6 +1202,7 @@ impl Drop for VMWrapper {
 #[pymethods]
 impl VMWrapper {
     #[new]
+    #[pyo3(text_signature = "($cls, gc, value, py)")]
     fn new(gc: &mut GCSystem, value: PyObject, py: Python) -> PyResult<Self> {
         let mut xlang_ref =
             extract_xlang_gc_ref_with_gc_arc(value.bind(py), Arc::clone(&gc.gc_system))?;
@@ -1170,11 +1211,13 @@ impl VMWrapper {
         Ok(wrapped)
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn get_value(&mut self, py: Python) -> PyResult<PyObject> {
         let xlang_wrapper = self.gc_ref.as_type::<XlangVMWrapper>();
         xlang_gc_ref_to_py_object(&mut xlang_wrapper.value_ref, self.gc_system.clone(), py)
     }
 
+    #[pyo3(text_signature = "($self, value, py)")]
     fn set_value(&mut self, value: PyObject, py: Python) -> PyResult<()> {
         let mut new_value_ref =
             extract_xlang_gc_ref_with_gc_arc(value.bind(py), self.gc_system.clone())?;
@@ -1202,6 +1245,7 @@ impl VMWrapper {
         Ok(format!("wrap({})", value_str))
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn clone(&mut self, _py: Python) -> PyResult<Self> {
         // This will be a shallow clone of the wrapper structure, elements are shared.
         // For a deep clone, each element would need to be cloned.
@@ -1260,22 +1304,27 @@ impl Drop for VMRange {
 #[pymethods]
 impl VMRange {
     #[new]
+    #[pyo3(text_signature = "($cls, gc, start, end)")]
     fn new(gc: &mut GCSystem, start: i64, end: i64) -> Self {
         VMRange::create(gc, start, end)
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn get_start(&self) -> i64 {
         self.gc_ref.as_const_type::<XlangVMRange>().start
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn get_end(&self) -> i64 {
         self.gc_ref.as_const_type::<XlangVMRange>().end
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn get_key(&self) -> i64 {
         self.get_start()
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn get_value(&self) -> i64 {
         self.get_end()
     }
@@ -1296,6 +1345,7 @@ impl VMRange {
         (self.get_end() - self.get_start()) as usize
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn clone(&self) -> Self {
         let new_gc_ref = self
             .gc_system
@@ -1307,6 +1357,7 @@ impl VMRange {
         }
     }
 
+    #[pyo3(text_signature = "($self, py)")]
     fn to_py(&self, py: Python) -> PyResult<PyObject> {
         let start = self.get_start();
         let end = self.get_end();
@@ -1323,6 +1374,7 @@ impl VMRange {
 #[pymethods]
 impl GCSystem {
     #[new]
+    #[pyo3(text_signature = "($cls)")]
     fn new() -> Self {
         let gc_system = XlangGCSystem::new(None);
         GCSystem {
@@ -1330,46 +1382,57 @@ impl GCSystem {
         }
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn collect(&mut self) {
         self.gc_system.borrow_mut().collect();
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn object_count(&self) -> usize {
         self.gc_system.borrow()._count()
     }
 
+    #[pyo3(text_signature = "($self, value)")]
     fn new_int(&mut self, value: i64) -> VMInt {
         VMInt::create(self, value)
     }
 
+    #[pyo3(text_signature = "($self, value)")]
     fn new_float(&mut self, value: f64) -> VMFloat {
         VMFloat::create(self, value)
     }
 
+    #[pyo3(text_signature = "($self, value)")]
     fn new_string(&mut self, value: String) -> VMString {
         VMString::create(self, value)
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn new_null(&mut self) -> VMNull {
         VMNull::create(self)
     }
 
+    #[pyo3(text_signature = "($self, value)")]
     fn new_bytes(&mut self, value: Vec<u8>) -> VMBytes {
         VMBytes::create(self, value)
     }
 
+    #[pyo3(text_signature = "($self, key, value, py)")]
     fn new_keyval(&mut self, key: PyObject, value: PyObject, py: Python) -> PyResult<VMKeyVal> {
         VMKeyVal::create(self, key, value, py)
     }
 
+    #[pyo3(text_signature = "($self, name, value, py)")]
     fn new_named(&mut self, name: PyObject, value: PyObject, py: Python) -> PyResult<VMNamed> {
         VMNamed::create(self, name, value, py)
     }
 
+    #[pyo3(text_signature = "($self, values, py)")]
     fn new_tuple(&mut self, values: Vec<PyObject>, py: Python) -> PyResult<VMTuple> {
         VMTuple::create(self, values, py)
     }
 
+    #[pyo3(text_signature = "($self, value, py)")]
     fn new_wrapper(&mut self, value: PyObject, py: Python) -> PyResult<VMWrapper> {
         let mut xlang_ref =
             extract_xlang_gc_ref_with_gc_arc(value.bind(py), Arc::clone(&self.gc_system))?;
@@ -1378,14 +1441,17 @@ impl GCSystem {
         Ok(wrapped)
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn new_lambda(&mut self) -> PyResult<Lambda> {
         Ok(Lambda::create(self))
     }
 
+    #[pyo3(text_signature = "($self, start, end)")]
     fn new_range(&mut self, start: i64, end: i64) -> VMRange {
         VMRange::create(self, start, end)
     }
 
+    #[pyo3(text_signature = "($self)")]
     fn new_pyfunction(&mut self) -> WrappedPyFunction {
         WrappedPyFunction::create(self)
     }

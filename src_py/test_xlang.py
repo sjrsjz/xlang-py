@@ -2,10 +2,6 @@ import sys
 import unittest
 import os
 
-# 将当前目录添加到 Python 路径，以便导入 xlang_py 模块
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-
 from xlang_py import (
     GCSystem,
     VMInt,
