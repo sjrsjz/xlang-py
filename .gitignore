@@ -1,3 +1,6 @@
 /target
 /python_env
 **.pyc
+**.pyo
+**.pyd
+__pycache__/

@@ -3,7 +3,7 @@ use std::{cell::RefCell, sync::Arc};
 use crate::{
     extract_xlang_gc_ref_with_gc, extract_xlang_gc_ref_with_gc_arc, xlang_gc_ref_to_py_object, GCSystem, VMTuple, XlangCompilationError, XlangExecutionError
 };
-use pyo3::types::{PyDict, PyString, PyTuple};
+use pyo3::types::{PyDict, PyTuple};
 use pyo3::{exceptions::PyIOError, prelude::*};
 use xlang_frontend::{compile::build_code, dir_stack::DirStack};
 use xlang_vm_core::executor::vm::VMCoroutinePool;
@@ -372,20 +372,13 @@ impl WrappedPyFunction {
                 let args_tuple = args.as_type::<XLangVMTuple>();
                 let mut py_args = Vec::new();
 
-                // 将XLang参数转换为Python对象
-                // 将XLang参数转换为Python对象
+                let py_kwargs = PyDict::new(py);
+
                 for arg_ref in &mut args_tuple.values {
-                    if arg_ref.isinstance::<XLangVMNamed>() {
+                    if arg_ref.isinstance::<XLangVMNamed>() && arg_ref.as_const_type::<XLangVMNamed>().key.isinstance::<XLangVMString>() {
                         // 解包 VMNamed 为键值对
                         let named = arg_ref.as_type::<XLangVMNamed>();
-                        if !named.key.isinstance::<XLangVMString>() {
-                            return Err(VMVariableError::TypeError(
-                                arg_ref.clone_ref(),
-                                "expected string for named argument".to_string(),
-                            ));
-                        }
                         let key = named.key.as_type::<XLangVMString>().value.clone();
-                        let py_key = PyString::new(py, &key).to_object(py);
                         let py_value = match xlang_gc_ref_to_py_object(
                             &mut named.value,
                             gc_system_arc.clone(),
@@ -399,8 +392,15 @@ impl WrappedPyFunction {
                                 )));
                             }
                         };
-                        py_args.push((py_key, py_value).to_object(py));
+                        // 将命名参数添加到kwargs字典中
+                        if let Err(e) = py_kwargs.set_item(key, py_value) {
+                            return Err(VMVariableError::DetailedError(format!(
+                                "Failed to set keyword argument: {}",
+                                e
+                            )));
+                        }
                     } else {
+                        // 普通位置参数保持不变
                         let py_arg = match xlang_gc_ref_to_py_object(
                             arg_ref,
                             gc_system_arc.clone(),
@@ -418,7 +418,7 @@ impl WrappedPyFunction {
                     }
                 }
 
-                // 调用Python函数
+                // 创建位置参数元组
                 let py_tuple = match PyTuple::new(py, &py_args) {
                     Ok(tuple) => tuple,
                     Err(e) => {
@@ -428,7 +428,7 @@ impl WrappedPyFunction {
                         )));
                     }
                 };
-                match callable_ref.call1(py, py_tuple) {
+                match callable_ref.call(py, py_tuple, Some(&py_kwargs)) {
                     Ok(py_result) => {
                         let bound_result = py_result.into_bound(py);
                         extract_xlang_gc_ref_with_gc(&bound_result, gc_system).map_err(|e| {

@@ -321,6 +321,11 @@ impl VMNull {
         VMNull::create(gc)
     }
 
+    #[pyo3(text_signature = "($self)")]
+    fn get_value(&self) -> PyResult<PyObject> {
+        let py_none = Python::with_gil(|py| py.None());
+        Ok(py_none.into())
+    }
     fn __repr__(&self) -> PyResult<String> {
         Ok("VMNull()".to_string())
     }
@@ -1083,6 +1088,44 @@ impl VMTuple {
                 "Tuple index out of range",
             ))
         }
+    }
+
+    fn __getattr__(&mut self, attr: &str, py: Python) -> PyResult<PyObject> {
+        let xlang_tuple = self.gc_ref.as_type::<XlangVMTuple>();
+        for item_ref in &mut xlang_tuple.values {
+            if item_ref.isinstance::<XlangVMNamed>() {
+                let xlang_named = item_ref.as_type::<XlangVMNamed>();
+                if !xlang_named.key.isinstance::<XlangVMString>() {
+                    continue;
+                }
+                let xlang_key = xlang_named.key.as_const_type::<XlangVMString>();
+                let key_str = xlang_key.value.as_str();
+                if key_str == attr {
+                    return xlang_gc_ref_to_py_object(
+                        &mut xlang_named.value,
+                        self.gc_system.clone(),
+                        py,
+                    );
+                }
+            } else if item_ref.isinstance::<XlangVMKeyVal>() {
+                let xlang_kv = item_ref.as_type::<XlangVMKeyVal>();
+                if !xlang_kv.key.isinstance::<XlangVMString>() {
+                    continue;
+                }
+                let xlang_key = xlang_kv.key.as_const_type::<XlangVMString>();
+                let key_str = xlang_key.value.as_str();
+                if key_str == attr {
+                    return xlang_gc_ref_to_py_object(
+                        &mut xlang_kv.value,
+                        self.gc_system.clone(),
+                        py,
+                    );
+                }
+            }
+        }
+        Err(PyErr::new::<pyo3::exceptions::PyAttributeError, _>(
+            format!("Attribute {} not found in tuple", attr),
+        ))
     }
 
     #[pyo3(text_signature = "($self, py)")]

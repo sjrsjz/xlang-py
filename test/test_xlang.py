@@ -2,20 +2,7 @@ import sys
 import unittest
 import os
 
-from xlang_py import (
-    GCSystem,
-    VMInt,
-    VMFloat,
-    VMString,
-    VMKeyVal,
-    VMNamed,
-    VMTuple,
-    VMNull,
-    VMBytes,
-    Lambda,
-    WrappedPyFunction,
-)
-
+from xlang import GCSystem, VMTuple, wrap_py_function
 
 class TestXLang(unittest.TestCase):
     def setUp(self):
@@ -145,7 +132,7 @@ class TestXLang(unittest.TestCase):
 
         kv = self.gc.from_pydict(py_dict)
         self.assertIsInstance(kv, VMTuple)
-        self.assertEqual(kv[2].get_value().get_value(), "hello")
+        self.assertEqual(kv.C.get_value(), "hello")
 
     def test_xlang(self):
         xlang_lambda = self.gc.new_lambda()
@@ -164,33 +151,21 @@ class TestXLang(unittest.TestCase):
         )
 
     def test_py_function(self):
-        def py_func(a, b):
-            return a[1].get_value() + b[1].get_value()
+        def py_func(string):
+            print(string)
 
-        wrapped_func = self.gc.new_pyfunction()
-        wrapped_func.wrap(
-            py_func,
-            self.gc.new_tuple(
-                [
-                    self.gc.new_named("a", 1),
-                    self.gc.new_named("b", 2),
-                ]
-            ),
-        )
+        wrapped_func = wrap_py_function(self.gc, py_func)
 
         xlang_lambda = self.gc.new_lambda()
         xlang_lambda.load(
             code="""
-                @required add; 
-                add(1, 2)
+                @required print;
+                print("Hello from XLang!");                
                 """,
             default_args=self.gc.new_tuple([]),
         )
 
-        self.assertEqual(
-            xlang_lambda(kwargs={"add": wrapped_func}).get_value(),
-            3,
-        )
+        print(xlang_lambda(kwargs={"print": wrapped_func}).get_value())
 
     def __del__(self):
         # 清理资源

@@ -92,7 +92,7 @@ def build_project(python_cmd, pip_cmd):
 def run_tests(python_cmd):
     """运行 Python 测试"""
     print("\n=== 开始运行测试 ===")
-    test_file = os.path.join("src_py", "test_xlang.py")
+    test_file = os.path.join("test", "test_xlang.py")
 
     # 设置环境变量，确保编码正确
     env = os.environ.copy()
