@@ -1,7 +1,9 @@
-use std::{cell::RefCell, sync::Arc};
+use std::sync::Arc;
 
+use crate::arc_unsafe_refcell::Inner;
 use crate::{
-    extract_xlang_gc_ref_with_gc, extract_xlang_gc_ref_with_gc_arc, xlang_gc_ref_to_py_object, GCSystem, VMTuple, XlangCompilationError, XlangExecutionError
+    extract_xlang_gc_ref_with_gc, extract_xlang_gc_ref_with_gc_arc, xlang_gc_ref_to_py_object,
+    ArcUnsafeRefCellWrapper, GCSystem, VMTuple, XlangCompilationError, XlangExecutionError,
 };
 use pyo3::types::{PyDict, PyTuple};
 use pyo3::{exceptions::PyIOError, prelude::*};
@@ -21,7 +23,7 @@ use xlang_vm_core::executor::variable::{VMLambda as XLangVMLambda, VMVariableErr
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct Lambda {
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
     lambda_object: Option<GCRef>,
 }
 
@@ -29,7 +31,7 @@ impl Lambda {
     pub(crate) fn create(gc: &mut GCSystem) -> Self {
         Lambda {
             lambda_object: None,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         }
     }
 }
@@ -48,7 +50,7 @@ impl Lambda {
     fn new(gc: &mut GCSystem) -> Self {
         Lambda {
             lambda_object: None,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         }
     }
 
@@ -95,32 +97,62 @@ impl Lambda {
         }
 
         let mut capture_ref_option: Option<GCRef> = if let Some(c) = capture {
-            Some(extract_xlang_gc_ref_with_gc_arc(&c.into_bound(py), self.gc_system.clone())?)
+            Some(extract_xlang_gc_ref_with_gc_arc(
+                &c.into_bound(py),
+                self.gc_system.clone(),
+            )?)
         } else {
             None
         };
 
         let mut self_object_ref_option: Option<GCRef> = if let Some(s) = self_object {
-            Some(extract_xlang_gc_ref_with_gc_arc(&s.into_bound(py), self.gc_system.clone())?)
+            Some(extract_xlang_gc_ref_with_gc_arc(
+                &s.into_bound(py),
+                self.gc_system.clone(),
+            )?)
         } else {
             None
         };
 
-        let mut default_result = self.gc_system.borrow_mut().new_object(XLangVMNull::new());
-        let mut instruction_ref = self
-            .gc_system
-            .borrow_mut()
-            .new_object(VMInstructions::new(&instruction_package.unwrap()));
-        let lambda: GCRef = self.gc_system.borrow_mut().new_object(XLangVMLambda::new(
-            0,
-            "__main__".to_string(),
-            &mut default_args.gc_ref,
-            capture_ref_option.as_mut(),
-            self_object_ref_option.as_mut(),
-            &mut XLangVMLambdaBody::VMInstruction(instruction_ref.clone()),
-            &mut default_result,
-            false,
-        ));
+        let mut default_result = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XLangVMNull::new()),
+            Err(e) => {
+                return Err(XlangExecutionError::new_err(format!(
+                    "Failed to create default result: {}",
+                    e
+                )))
+            }
+        };
+        let mut instruction_ref = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => {
+                gc_system.new_object(VMInstructions::new(&instruction_package.unwrap()))
+            }
+            Err(e) => {
+                return Err(XlangExecutionError::new_err(format!(
+                    "Failed to create instruction reference: {}",
+                    e
+                )))
+            }
+        };
+
+        let lambda: GCRef = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XLangVMLambda::new(
+                0,
+                "__main__".to_string(),
+                &mut default_args.gc_ref,
+                capture_ref_option.as_mut(),
+                self_object_ref_option.as_mut(),
+                &mut XLangVMLambdaBody::VMInstruction(instruction_ref.clone()),
+                &mut default_result,
+                false,
+            )),
+            Err(e) => {
+                return Err(XlangExecutionError::new_err(format!(
+                    "Failed to create lambda object: {}",
+                    e
+                )))
+            }
+        };
 
         let mut old_ref = self.lambda_object.take();
         self.lambda_object = Some(lambda);
@@ -157,24 +189,62 @@ impl Lambda {
             )?);
         }
 
-        let mut arg_tuple = self
-            .gc_system
-            .borrow_mut()
-            .new_object(XLangVMTuple::new(&mut args_vec.iter_mut().collect()));
+        let mut arg_tuple = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => {
+                gc_system.new_object(XLangVMTuple::new(&mut args_vec.iter_mut().collect()))
+            }
+            Err(e) => {
+                for arg in args_vec.iter_mut() {
+                    arg.drop_ref();
+                }
+                return Err(XlangExecutionError::new_err(format!(
+                    "Failed to create argument tuple: {}",
+                    e
+                )));
+            }
+        };
 
         if let Some(kwargs) = kwargs {
             for (key, value) in kwargs.iter() {
-                let mut key_str = self
-                    .gc_system
-                    .borrow_mut()
-                    .new_object(XLangVMString::new(&key.extract::<String>().unwrap()));
-                let mut value_ref =
-                    extract_xlang_gc_ref_with_gc_arc(&value.extract::<PyObject>().unwrap().into_bound(py), self.gc_system.clone())?;
+                let mut key_str = match self.gc_system.borrow_mut() {
+                    Ok(mut gc_system) => {
+                        gc_system.new_object(XLangVMString::new(&key.extract::<String>().unwrap()))
+                    }
+                    Err(e) => {
+                        for arg in args_vec.iter_mut() {
+                            arg.drop_ref();
+                        }
+                        arg_tuple.drop_ref();
+                        return Err(XlangExecutionError::new_err(format!(
+                            "Failed to create key string: {}",
+                            e
+                        )));
+                    }
+                };
 
-                let mut keyval = self
-                    .gc_system
-                    .borrow_mut()
-                    .new_object(XLangVMNamed::new(&mut key_str, &mut value_ref));
+                let mut value_ref = extract_xlang_gc_ref_with_gc_arc(
+                    &value.extract::<PyObject>().unwrap().into_bound(py),
+                    self.gc_system.clone(),
+                )?;
+
+                let mut keyval = match self.gc_system.borrow_mut() {
+                    Ok(mut gc_system) => {
+                        gc_system.new_object(XLangVMNamed::new(&mut key_str, &mut value_ref))
+                    }
+                    Err(e) => {
+                        for arg in args_vec.iter_mut() {
+                            arg.drop_ref();
+                        }
+                        arg_tuple.drop_ref();
+                        key_str.drop_ref();
+                        value_ref.drop_ref();
+                        return Err(XlangExecutionError::new_err(format!(
+                            "Failed to create named value: {}",
+                            e
+                        )));
+                    }
+                };
+
                 key_str.drop_ref();
                 value_ref.drop_ref();
 
@@ -198,11 +268,60 @@ impl Lambda {
 
         let mut coroutine_pool = VMCoroutinePool::new(true);
 
-        let coro_id = coroutine_pool.new_coroutine(
-            &mut self.lambda_object.as_mut().unwrap().clone_ref(),
-            &mut arg_tuple,
-            &mut self.gc_system.borrow_mut(),
-        );
+        let assgined = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => self
+                .lambda_object
+                .as_mut()
+                .unwrap()
+                .as_type::<XLangVMLambda>()
+                .default_args_tuple
+                .as_type::<XLangVMTuple>()
+                .clone_and_assign_members(&mut arg_tuple, &mut gc_system),
+            Err(e) => {
+                for arg in args_vec.iter_mut() {
+                    arg.drop_ref();
+                }
+                arg_tuple.drop_ref();
+                return Err(XlangExecutionError::new_err(format!(
+                    "Failed to borrow GC system for arguments assignment: {}",
+                    e
+                )));
+            }
+        };
+
+        arg_tuple.drop_ref();
+        if assgined.is_err() {
+            for arg in args_vec.iter_mut() {
+                arg.drop_ref();
+            }
+            return Err(XlangExecutionError::new_err(format!(
+                "Failed to assign arguments: {}",
+                {
+                    let mut e = assgined.err().unwrap();
+                    e.consume_ref();
+                    e.to_string()
+                }
+            )));
+        }
+        let mut assgined = assgined.unwrap();
+
+        let coro_id = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => coroutine_pool.new_coroutine(
+                &mut self.lambda_object.as_mut().unwrap().clone_ref(),
+                &mut assgined,
+                &mut gc_system,
+            ),
+            Err(e) => {
+                for arg in args_vec.iter_mut() {
+                    arg.drop_ref();
+                }
+                return Err(XlangExecutionError::new_err(format!(
+                    "Failed to borrow GC system for coroutine creation: {}",
+                    e
+                )));
+            }
+        };
+
         if coro_id.is_err() {
             return Err(XlangExecutionError::new_err(format!(
                 "Failed to create coroutine: {}",
@@ -218,7 +337,10 @@ impl Lambda {
         }
         let _coro_id = coro_id.unwrap();
 
-        let result = coroutine_pool.run_until_finished(&mut self.gc_system.borrow_mut());
+        let result = unsafe {
+            coroutine_pool.run_until_finished(self.gc_system.get_mut())
+        }; 
+
         if result.is_err() {
             return Err(XlangExecutionError::new_err(format!(
                 "Failed to run coroutine: {}",
@@ -264,15 +386,17 @@ impl Lambda {
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct WrappedPyFunction {
-    pub(crate) gc_system: Arc<RefCell<XlangGCSystem>>,
+    pub(crate) gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
     pub(crate) function_object: Option<GCRef>,
+    pub(crate) callable_ref: Option<Arc<PyObject>>,
 }
 
 impl WrappedPyFunction {
     pub(crate) fn create(gc: &mut GCSystem) -> Self {
         WrappedPyFunction {
             function_object: None,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
+            callable_ref: None,
         }
     }
 }
@@ -286,8 +410,8 @@ impl Drop for WrappedPyFunction {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PackedCallableContext {
-    callable_ref: usize,  // 使用整数代替裸指针
-    cloned_gc_arc: usize, // 同样使用整数代替裸指针
+    callable_ref: usize, // 使用整数代替裸指针
+    gc_arc: usize,       // 使用整数代替裸指针
 }
 
 #[pymethods]
@@ -296,7 +420,8 @@ impl WrappedPyFunction {
     fn new(gc: &mut GCSystem) -> Self {
         WrappedPyFunction {
             function_object: None,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
+            callable_ref: None,
         }
     }
 
@@ -313,20 +438,17 @@ impl WrappedPyFunction {
         }
 
         // 将Python可调用对象存储在Arc中以安全地在多个地方共享
-        let callable_ref = Arc::new(PyObject::from(py_callable));
-        let gc_system_arc = Arc::clone(&self.gc_system);
-
+        self.callable_ref = Some(Arc::new(py_callable));
         // 创建上下文并序列化为字节
-        let context = PackedCallableContext {
-            callable_ref: Arc::as_ptr(&callable_ref) as usize, // 将Arc的裸指针存储为整数
-            cloned_gc_arc: Arc::as_ptr(&gc_system_arc) as usize, // 同样处理gc_system_arc
-        };
+        let context =  
+            PackedCallableContext {
+                callable_ref: Arc::as_ptr(self.callable_ref.as_ref().unwrap()) as usize, // 将Arc的裸指针存储为整数
+                gc_arc: self.gc_system.get_inner() as usize
+            }
+        ;
         let serialized_context = bincode::serialize(&context).unwrap();
 
-        // 确保Arc不会被提前释放
-        let _ = Arc::clone(&callable_ref);
-        let _ = Arc::clone(&gc_system_arc);
-
+        
         // 定义静态函数
         #[allow(deprecated)]
         fn py_function_static(
@@ -356,8 +478,11 @@ impl WrappedPyFunction {
 
             // 重新构造Arc
             let callable_ref = unsafe { Arc::from_raw(context.callable_ref as *const PyObject) };
-            let gc_system_arc =
-                unsafe { Arc::from_raw(context.cloned_gc_arc as *const RefCell<XlangGCSystem>) };
+            std::mem::forget(callable_ref.clone()); // 防止调用时释放
+            
+            let gc_system_arc = ArcUnsafeRefCellWrapper::from_inner(
+                context.gc_arc as *mut Inner<XlangGCSystem>,
+            );
 
             Python::with_gil(|py| {
                 // 确保参数是一个元组
@@ -375,7 +500,12 @@ impl WrappedPyFunction {
                 let py_kwargs = PyDict::new(py);
 
                 for arg_ref in &mut args_tuple.values {
-                    if arg_ref.isinstance::<XLangVMNamed>() && arg_ref.as_const_type::<XLangVMNamed>().key.isinstance::<XLangVMString>() {
+                    if arg_ref.isinstance::<XLangVMNamed>()
+                        && arg_ref
+                            .as_const_type::<XLangVMNamed>()
+                            .key
+                            .isinstance::<XLangVMString>()
+                    {
                         // 解包 VMNamed 为键值对
                         let named = arg_ref.as_type::<XLangVMNamed>();
                         let key = named.key.as_type::<XLangVMString>().value.clone();
@@ -401,19 +531,16 @@ impl WrappedPyFunction {
                         }
                     } else {
                         // 普通位置参数保持不变
-                        let py_arg = match xlang_gc_ref_to_py_object(
-                            arg_ref,
-                            gc_system_arc.clone(),
-                            py,
-                        ) {
-                            Ok(obj) => obj,
-                            Err(e) => {
-                                return Err(VMVariableError::DetailedError(format!(
-                                    "Failed to convert argument to Python: {}",
-                                    e
-                                )));
-                            }
-                        };
+                        let py_arg =
+                            match xlang_gc_ref_to_py_object(arg_ref, gc_system_arc.clone(), py) {
+                                Ok(obj) => obj,
+                                Err(e) => {
+                                    return Err(VMVariableError::DetailedError(format!(
+                                        "Failed to convert argument to Python: {}",
+                                        e
+                                    )));
+                                }
+                            };
                         py_args.push(py_arg);
                     }
                 }
@@ -447,33 +574,56 @@ impl WrappedPyFunction {
         }
 
         // 创建一个新的XLang函数对象
-        let mut packed_context = self
-            .gc_system
-            .borrow_mut()
-            .new_object(XLangVMBytes::new(&serialized_context));
+        let mut packed_context = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XLangVMBytes::new(&serialized_context)),
+            Err(e) => {
+                return Err(XlangExecutionError::new_err(format!(
+                    "Failed to borrow GC system for context creation: {}",
+                    e
+                )));
+            }
+        };
 
-        let mut default_result = self.gc_system.borrow_mut().new_object(XLangVMNull::new());
-        let function_object = self.gc_system.borrow_mut().new_object(XLangVMLambda::new(
-            0,
-            "<python>".to_string(),
-            &mut default_args.gc_ref,
-            Some(&mut packed_context),
-            None,
-            &mut XLangVMLambdaBody::VMNativeFunction(py_function_static),
-            &mut default_result,
-            false,
-        ));
+        let mut default_result = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XLangVMNull::new()),
+            Err(e) => {
+                packed_context.drop_ref();
+                return Err(XlangExecutionError::new_err(format!(
+                    "Failed to borrow GC system for default result creation: {}",
+                    e
+                )));
+            }
+        };
+
+        let function_object = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XLangVMLambda::new(
+                0,
+                "<python>".to_string(),
+                &mut default_args.gc_ref,
+                Some(&mut packed_context),
+                None,
+                &mut XLangVMLambdaBody::VMNativeFunction(py_function_static),
+                &mut default_result,
+                false,
+            )),
+            Err(e) => {
+                packed_context.drop_ref();
+                default_result.drop_ref();
+                return Err(XlangExecutionError::new_err(format!(
+                    "Failed to borrow GC system for function creation: {}",
+                    e
+                )));
+            }
+        };
+
         default_result.drop_ref();
         packed_context.drop_ref();
 
         self.function_object = Some(function_object);
 
-        // 确保Arc不会被提前释放
-        std::mem::forget(callable_ref);
-        std::mem::forget(gc_system_arc);
-
         Ok(())
     }
+
     fn __repr__(&self, _py: Python<'_>) -> PyResult<String> {
         if self.function_object.is_none() {
             return Err(XlangExecutionError::new_err(format!(

@@ -1,6 +1,4 @@
-use std::cell::RefCell;
-use std::sync::Arc;
-
+use arc_unsafe_refcell::ArcUnsafeRefCellWrapper;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyNone, PyString, PyTuple};
 use pyo3::{create_exception, prelude::*};
 use xlang::{Lambda, WrappedPyFunction};
@@ -13,11 +11,14 @@ use xlang_vm_core::executor::variable::{
 use xlang_vm_core::gc::GCRef as XlangGCRef;
 use xlang_vm_core::gc::GCSystem as XlangGCSystem;
 
+mod arc_unsafe_refcell;
 mod xlang;
+
+// type ArcUnsafeGCWrapper = Arc<RefCell<UnsafeGCWrapper>>;
 
 #[pyclass(unsendable)]
 struct GCSystem {
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 
 #[allow(dead_code)]
@@ -32,15 +33,20 @@ trait GCRef {
 #[derive(Clone)]
 struct VMInt {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 
 impl VMInt {
     fn create(gc: &mut GCSystem, value: i64) -> Self {
-        let gc_ref = gc.gc_system.borrow_mut().new_object(XlangVMInt::new(value));
+        let gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XlangVMInt::new(value)),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         VMInt {
             gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         }
     }
 }
@@ -89,10 +95,15 @@ impl VMInt {
     #[pyo3(text_signature = "($self)")]
     fn clone(&mut self) -> Self {
         let value = XlangVMInt::new(self.get_value());
-        let gc_ref = self.gc_system.borrow_mut().new_object(value);
+        let gc_ref = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(value),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         return VMInt {
             gc_ref,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         };
     }
 
@@ -114,18 +125,20 @@ impl Drop for VMInt {
 #[derive(Clone)]
 struct VMFloat {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 
 impl VMFloat {
     fn create(gc: &mut GCSystem, value: f64) -> Self {
-        let gc_ref = gc
-            .gc_system
-            .borrow_mut()
-            .new_object(XlangVMFloat::new(value));
+        let gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XlangVMFloat::new(value)),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         VMFloat {
             gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         }
     }
 }
@@ -173,10 +186,15 @@ impl VMFloat {
     #[pyo3(text_signature = "($self)")]
     fn clone(&mut self) -> Self {
         let value = XlangVMFloat::new(self.get_value());
-        let gc_ref = self.gc_system.borrow_mut().new_object(value);
+        let gc_ref = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(value),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         return VMFloat {
             gc_ref,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         };
     }
 
@@ -198,18 +216,20 @@ impl Drop for VMFloat {
 #[derive(Clone)]
 struct VMString {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 
 impl VMString {
     fn create(gc: &mut GCSystem, value: String) -> Self {
-        let gc_ref = gc
-            .gc_system
-            .borrow_mut()
-            .new_object(XlangVMString::new(&value));
+        let gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XlangVMString::new(&value)),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         VMString {
             gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         }
     }
 }
@@ -260,10 +280,15 @@ impl VMString {
 
     fn clone(&mut self) -> Self {
         let value = XlangVMString::new(&self.get_value());
-        let gc_ref = self.gc_system.borrow_mut().new_object(value);
+        let gc_ref = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(value),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         return VMString {
             gc_ref,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         };
     }
 
@@ -285,15 +310,20 @@ impl Drop for VMString {
 #[derive(Clone)]
 struct VMNull {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 
 impl VMNull {
     fn create(gc: &mut GCSystem) -> Self {
-        let gc_ref = gc.gc_system.borrow_mut().new_object(XlangVMNull::new());
+        let gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XlangVMNull::new()),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         VMNull {
             gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         }
     }
 }
@@ -335,10 +365,15 @@ impl VMNull {
 
     #[pyo3(text_signature = "($self)")]
     fn clone(&mut self) -> Self {
-        let gc_ref = self.gc_system.borrow_mut().new_object(XlangVMNull::new());
+        let gc_ref = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XlangVMNull::new()),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         return VMNull {
             gc_ref,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         };
     }
 
@@ -359,18 +394,20 @@ impl Drop for VMNull {
 #[derive(Clone)]
 struct VMBytes {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 
 impl VMBytes {
     fn create(gc: &mut GCSystem, value: Vec<u8>) -> Self {
-        let gc_ref = gc
-            .gc_system
-            .borrow_mut()
-            .new_object(XlangVMBytes::new(&value));
+        let gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XlangVMBytes::new(&value)),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         VMBytes {
             gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         }
     }
 }
@@ -439,10 +476,15 @@ impl VMBytes {
     #[pyo3(text_signature = "($self)")]
     fn clone(&mut self) -> Self {
         let value = XlangVMBytes::new(&self.get_value());
-        let gc_ref = self.gc_system.borrow_mut().new_object(value);
+        let gc_ref = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(value),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         return VMBytes {
             gc_ref,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         };
     }
 
@@ -462,7 +504,7 @@ impl Drop for VMBytes {
 // Helper function to handle Python basic types conversion using GC system
 fn extract_xlang_gc_ref_with_gc_arc(
     obj: &Bound<'_, PyAny>,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 ) -> PyResult<XlangGCRef> {
     // First try to extract as a VM type
     if let Ok(gc_ref) = extract_xlang_gc_ref(obj) {
@@ -472,52 +514,87 @@ fn extract_xlang_gc_ref_with_gc_arc(
     if let Ok(py_int) = obj.downcast::<PyInt>() {
         let value = py_int.extract::<i64>()?;
         let xlang_int = XlangVMInt::new(value);
-        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_int);
+        let new_gc_ref = match gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard.new_object(xlang_int),
+            Err(_) => {
+                panic!("Failed to borrow GC system for PyInt conversion");
+            }
+        };
         Ok(new_gc_ref)
     } else if let Ok(py_float) = obj.downcast::<PyFloat>() {
         let value = py_float.extract::<f64>()?;
         let xlang_float = XlangVMFloat::new(value);
-        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_float);
+        let new_gc_ref = match gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard.new_object(xlang_float),
+            Err(_) => {
+                panic!("Failed to borrow GC system for PyFloat conversion");
+            }
+        };
         Ok(new_gc_ref)
     } else if let Ok(py_str) = obj.downcast::<PyString>() {
         let value = py_str.to_string_lossy().to_string();
         let xlang_string = XlangVMString::new(&value);
-        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_string);
+        let new_gc_ref = match gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard.new_object(xlang_string),
+            Err(_) => {
+                panic!("Failed to borrow GC system for PyString conversion");
+            }
+        };
         Ok(new_gc_ref)
     } else if let Ok(py_bytes) = obj.downcast::<PyBytes>() {
         let value: Vec<u8> = py_bytes.extract()?;
         let xlang_bytes = XlangVMBytes::new(&value);
-        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_bytes);
+        let new_gc_ref = match gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard.new_object(xlang_bytes),
+            Err(_) => {
+                panic!("Failed to borrow GC system for PyBytes conversion");
+            }
+        };
         Ok(new_gc_ref)
     } else if let Ok(py_list) = obj.downcast::<PyList>() {
         let mut xlang_list: Vec<XlangGCRef> = Vec::new();
         for item in py_list.iter() {
-            let item_ref = extract_xlang_gc_ref_with_gc_arc(&item, Arc::clone(&gc_system))?;
+            let item_ref = extract_xlang_gc_ref_with_gc_arc(&item, gc_system.clone())?;
             xlang_list.push(item_ref);
         }
-        let new_gc_ref = gc_system
-            .borrow_mut()
-            .new_object(XlangVMTuple::new(&mut xlang_list.iter_mut().collect()));
+        let new_gc_ref = match gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard
+                .new_object(XlangVMTuple::new(&mut xlang_list.iter_mut().collect())),
+            Err(_) => {
+                panic!("Failed to borrow GC system for PyList conversion");
+            }
+        };
         for item in &mut xlang_list {
             item.drop_ref();
         }
         Ok(new_gc_ref)
-    } else if let Ok(py_list) = obj.downcast::<PyTuple>() {
+    } else if let Ok(py_tuple) = obj.downcast::<PyTuple>() {
+        // Changed py_list to py_tuple for clarity
         let mut xlang_list: Vec<XlangGCRef> = Vec::new();
-        for item in py_list.iter() {
-            let item_ref = extract_xlang_gc_ref_with_gc_arc(&item, Arc::clone(&gc_system))?;
+        for item in py_tuple.iter() {
+            // Changed py_list to py_tuple
+            let item_ref = extract_xlang_gc_ref_with_gc_arc(&item, gc_system.clone())?; // Changed Arc::clone to gc_system.clone()
             xlang_list.push(item_ref);
         }
-        let new_gc_ref = gc_system
-            .borrow_mut()
-            .new_object(XlangVMTuple::new(&mut xlang_list.iter_mut().collect()));
+        let new_gc_ref = match gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard
+                .new_object(XlangVMTuple::new(&mut xlang_list.iter_mut().collect())),
+            Err(_) => {
+                panic!("Failed to borrow GC system for PyTuple conversion");
+            }
+        };
         for item in &mut xlang_list {
             item.drop_ref();
         }
         Ok(new_gc_ref)
     } else if let Ok(_) = obj.downcast::<PyNone>() {
         let xlang_none = XlangVMNull::new();
-        let new_gc_ref = gc_system.borrow_mut().new_object(xlang_none);
+        let new_gc_ref = match gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard.new_object(xlang_none),
+            Err(_) => {
+                panic!("Failed to borrow GC system for PyNone conversion");
+            }
+        };
         Ok(new_gc_ref)
     } else {
         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
@@ -635,7 +712,7 @@ fn extract_xlang_gc_ref(obj: &Bound<'_, PyAny>) -> PyResult<XlangGCRef> {
 pub(crate) fn xlang_gc_ref_to_py_object(
     // Changed to pub(crate)
     gc_ref: &mut XlangGCRef, // Take ownership as we are creating a new Py wrapper
-    gc_system_arc: Arc<RefCell<XlangGCSystem>>,
+    gc_system_arc: ArcUnsafeRefCellWrapper<XlangGCSystem>,
     py: Python,
 ) -> PyResult<PyObject> {
     if gc_ref.isinstance::<XlangVMInt>() {
@@ -711,7 +788,7 @@ pub(crate) fn xlang_gc_ref_to_py_object(
 #[derive(Clone)]
 struct VMKeyVal {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 
 impl VMKeyVal {
@@ -722,19 +799,24 @@ impl VMKeyVal {
         py: Python,
     ) -> PyResult<Self> {
         let mut xlang_key_ref =
-            extract_xlang_gc_ref_with_gc_arc(py_key.bind(py), Arc::clone(&gc.gc_system))?;
+            extract_xlang_gc_ref_with_gc_arc(py_key.bind(py), gc.gc_system.clone())?;
         let mut xlang_value_ref =
-            extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), Arc::clone(&gc.gc_system))?;
+            extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), gc.gc_system.clone())?;
 
         let xlang_kv = XlangVMKeyVal::new(&mut xlang_key_ref, &mut xlang_value_ref);
-        let new_gc_ref = gc.gc_system.borrow_mut().new_object(xlang_kv);
+        let new_gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard.new_object(xlang_kv),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
 
         xlang_key_ref.drop_ref(); // Dropping the cloned refs from extract_xlang_gc_ref
         xlang_value_ref.drop_ref();
 
         Ok(VMKeyVal {
             gc_ref: new_gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         })
     }
 }
@@ -841,11 +923,16 @@ impl VMKeyVal {
         // This requires knowing their types and calling their respective Xlang::new methods.
         // This is complex. A simpler clone for now:
         let new_xlang_kv = XlangVMKeyVal::new(&mut xlang_kv_orig.key, &mut xlang_kv_orig.value);
-        let new_gc_ref = self.gc_system.borrow_mut().new_object(new_xlang_kv);
+        let new_gc_ref = match self.gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard.new_object(new_xlang_kv),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
 
         Ok(VMKeyVal {
             gc_ref: new_gc_ref,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         })
     }
 
@@ -870,7 +957,7 @@ impl Drop for VMKeyVal {
 #[derive(Clone)]
 struct VMNamed {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 
 impl VMNamed {
@@ -881,19 +968,24 @@ impl VMNamed {
         py: Python,
     ) -> PyResult<Self> {
         let mut xlang_name_ref =
-            extract_xlang_gc_ref_with_gc_arc(py_name.bind(py), Arc::clone(&gc.gc_system))?;
+            extract_xlang_gc_ref_with_gc_arc(py_name.bind(py), gc.gc_system.clone())?;
         let mut xlang_value_ref =
-            extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), Arc::clone(&gc.gc_system))?;
+            extract_xlang_gc_ref_with_gc_arc(py_value.bind(py), gc.gc_system.clone())?;
 
         let xlang_named = XlangVMNamed::new(&mut xlang_name_ref, &mut xlang_value_ref);
-        let new_gc_ref = gc.gc_system.borrow_mut().new_object(xlang_named);
+        let new_gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut mut_gc_system_guard) => mut_gc_system_guard.new_object(xlang_named),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
 
         xlang_name_ref.drop_ref();
         xlang_value_ref.drop_ref();
 
         Ok(VMNamed {
             gc_ref: new_gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         })
     }
 }
@@ -988,11 +1080,16 @@ impl VMNamed {
 
         let new_xlang_named =
             XlangVMNamed::new(&mut xlang_named_orig.key, &mut xlang_named_orig.value);
-        let new_gc_ref = self.gc_system.borrow_mut().new_object(new_xlang_named);
+        let new_gc_ref = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(new_xlang_named),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
 
         Ok(VMNamed {
             gc_ref: new_gc_ref,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         })
     }
 
@@ -1018,7 +1115,7 @@ impl Drop for VMNamed {
 #[derive(Clone)]
 struct VMTuple {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 
 impl VMTuple {
@@ -1027,7 +1124,7 @@ impl VMTuple {
         for py_obj in py_values {
             xlang_refs_vec.push(extract_xlang_gc_ref_with_gc_arc(
                 py_obj.bind(py),
-                Arc::clone(&gc.gc_system),
+                gc.gc_system.clone(),
             )?);
         }
 
@@ -1037,7 +1134,12 @@ impl VMTuple {
             xlang_refs_vec.iter_mut().collect();
 
         let xlang_tuple = XlangVMTuple::new(&mut refs_for_xlang_constructor);
-        let new_gc_ref = gc.gc_system.borrow_mut().new_object(xlang_tuple);
+        let new_gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(xlang_tuple),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
 
         // Drop the GCRefs in xlang_refs_vec as XlangVMTuple::new clones them.
         for mut r in xlang_refs_vec {
@@ -1046,7 +1148,7 @@ impl VMTuple {
 
         Ok(VMTuple {
             gc_ref: new_gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         })
     }
 }
@@ -1176,13 +1278,18 @@ impl VMTuple {
         // This will be a shallow clone of the tuple structure, elements are shared.
         // For a deep clone, each element would need to be cloned.
         let xlang_tuple_orig = self.gc_ref.as_type::<XlangVMTuple>();
-        let new_tuple = self.gc_system.borrow_mut().new_object(XlangVMTuple::new(
-            &mut xlang_tuple_orig.values.iter_mut().collect(),
-        ));
+        let new_tuple = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XlangVMTuple::new(
+                &mut xlang_tuple_orig.values.iter_mut().collect(),
+            )),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
 
         Ok(VMTuple {
             gc_ref: new_tuple,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         })
     }
 
@@ -1208,17 +1315,19 @@ impl Drop for VMTuple {
 #[derive(Clone)]
 struct VMWrapper {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 impl VMWrapper {
     fn create(gc: &mut GCSystem, value: &mut XlangGCRef) -> Self {
-        let gc_ref = gc
-            .gc_system
-            .borrow_mut()
-            .new_object(XlangVMWrapper::new(value));
+        let gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XlangVMWrapper::new(value)),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         VMWrapper {
             gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         }
     }
 }
@@ -1247,8 +1356,7 @@ impl VMWrapper {
     #[new]
     #[pyo3(text_signature = "($cls, gc, value, py)")]
     fn new(gc: &mut GCSystem, value: PyObject, py: Python) -> PyResult<Self> {
-        let mut xlang_ref =
-            extract_xlang_gc_ref_with_gc_arc(value.bind(py), Arc::clone(&gc.gc_system))?;
+        let mut xlang_ref = extract_xlang_gc_ref_with_gc_arc(value.bind(py), gc.gc_system.clone())?;
         let wrapped = VMWrapper::create(gc, &mut xlang_ref);
         xlang_ref.drop_ref(); // Drop the cloned ref
         Ok(wrapped)
@@ -1292,15 +1400,19 @@ impl VMWrapper {
     fn clone(&mut self, _py: Python) -> PyResult<Self> {
         // This will be a shallow clone of the wrapper structure, elements are shared.
         // For a deep clone, each element would need to be cloned.
-        let xlang_wrapper_orig = self.gc_ref.as_type::<XlangVMWrapper>();
-        let new_wrapper = self
-            .gc_system
-            .borrow_mut()
-            .new_object(XlangVMWrapper::new(&mut xlang_wrapper_orig.value_ref));
+        let xlang_wrapper_origin = self.gc_ref.as_type::<XlangVMWrapper>();
+        let new_wrapper = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => {
+                gc_system.new_object(XlangVMWrapper::new(&mut xlang_wrapper_origin.value_ref))
+            }
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
 
         Ok(VMWrapper {
             gc_ref: new_wrapper,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         })
     }
 }
@@ -1309,17 +1421,19 @@ impl VMWrapper {
 #[derive(Clone)]
 struct VMRange {
     gc_ref: XlangGCRef,
-    gc_system: Arc<RefCell<XlangGCSystem>>,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
 }
 impl VMRange {
     fn create(gc: &mut GCSystem, start: i64, end: i64) -> Self {
-        let gc_ref = gc
-            .gc_system
-            .borrow_mut()
-            .new_object(XlangVMRange::new(start, end));
+        let gc_ref = match gc.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.new_object(XlangVMRange::new(start, end)),
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         VMRange {
             gc_ref,
-            gc_system: Arc::clone(&gc.gc_system),
+            gc_system: gc.gc_system.clone(),
         }
     }
 }
@@ -1390,13 +1504,17 @@ impl VMRange {
 
     #[pyo3(text_signature = "($self)")]
     fn clone(&self) -> Self {
-        let new_gc_ref = self
-            .gc_system
-            .borrow_mut()
-            .new_object(XlangVMRange::new(self.get_start(), self.get_end()));
+        let new_gc_ref = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => {
+                gc_system.new_object(XlangVMRange::new(self.get_start(), self.get_end()))
+            }
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
         VMRange {
             gc_ref: new_gc_ref,
-            gc_system: Arc::clone(&self.gc_system),
+            gc_system: self.gc_system.clone(),
         }
     }
 
@@ -1419,20 +1537,29 @@ impl GCSystem {
     #[new]
     #[pyo3(text_signature = "($cls)")]
     fn new() -> Self {
-        let gc_system = XlangGCSystem::new(None);
         GCSystem {
-            gc_system: Arc::new(RefCell::new(gc_system)),
+            gc_system: ArcUnsafeRefCellWrapper::new(XlangGCSystem::new(None)),
         }
     }
 
     #[pyo3(text_signature = "($self)")]
     fn collect(&mut self) {
-        self.gc_system.borrow_mut().collect();
+        match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => gc_system.collect(),
+            Err(_) => {
+                panic!("Unable to collect garbage due to borrow error");
+            }
+        }
     }
 
     #[pyo3(text_signature = "($self)")]
     fn object_count(&self) -> usize {
-        self.gc_system.borrow()._count()
+        match self.gc_system.borrow() {
+            Ok(gc_system) => gc_system._count(),
+            Err(_) => {
+                panic!("Unable to get object count due to borrow error");
+            }
+        }
     }
 
     #[pyo3(text_signature = "($self, value)")]
@@ -1478,7 +1605,7 @@ impl GCSystem {
     #[pyo3(text_signature = "($self, value, py)")]
     fn new_wrapper(&mut self, value: PyObject, py: Python) -> PyResult<VMWrapper> {
         let mut xlang_ref =
-            extract_xlang_gc_ref_with_gc_arc(value.bind(py), Arc::clone(&self.gc_system))?;
+            extract_xlang_gc_ref_with_gc_arc(value.bind(py), self.gc_system.clone())?;
         let wrapped = VMWrapper::create(self, &mut xlang_ref);
         xlang_ref.drop_ref(); // Drop the cloned ref
         Ok(wrapped)
