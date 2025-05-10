@@ -378,9 +378,9 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xlang_frontend"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "047d6c4e85add0e43e943502b93a502c3052509dde054c60cd10387fa8a456a1"
+checksum = "e883925f51e2801f1ecae2270b79de4a458d2f6a1153e540a2f5d5db5c389ce8"
 dependencies = [
  "base64",
  "colored",
@@ -402,9 +402,9 @@ dependencies = [
 
 [[package]]
 name = "xlang_vm_core"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30cd4410a8065f945cf105979a80821d1f37b2c8d98330120baeb02a91dc7fa0"
+checksum = "c9f3e9ed45adbe38d7390423c36156bd6131408d3654790bb1655757da8f51d2"
 dependencies = [
  "base64",
  "bincode",

@@ -14,8 +14,11 @@ from xlang.xlang_py import (
     WrappedPyFunction,
     VMWrapper,
     VMRange,
+    XlangSetupError,
+    XlangCompilationError,
+    XlangTranslationError,
+    XlangExecutionError,
 )
-
 
 
 def wrap_py_function(gc: GCSystem, func: Callable) -> WrappedPyFunction:

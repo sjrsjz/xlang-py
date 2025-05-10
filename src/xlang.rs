@@ -8,7 +8,7 @@ use crate::{
 use pyo3::types::{PyDict, PyTuple};
 use pyo3::{exceptions::PyIOError, prelude::*};
 use xlang_frontend::{compile::build_code, dir_stack::DirStack};
-use xlang_vm_core::executor::vm::VMCoroutinePool;
+use xlang_vm_core::executor::vm::{VMCoroutinePool, VMError};
 use xlang_vm_core::gc::{GCRef, GCSystem as XlangGCSystem};
 use xlang_vm_core::ir_translator::IRTranslator;
 
@@ -25,6 +25,7 @@ use xlang_vm_core::executor::variable::{VMLambda as XLangVMLambda, VMVariableErr
 pub struct Lambda {
     gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
     lambda_object: Option<GCRef>,
+    run_condition: Option<Arc<PyObject>>,
 }
 
 impl Lambda {
@@ -32,6 +33,7 @@ impl Lambda {
         Lambda {
             lambda_object: None,
             gc_system: gc.gc_system.clone(),
+            run_condition: None,
         }
     }
 }
@@ -51,11 +53,12 @@ impl Lambda {
         Lambda {
             lambda_object: None,
             gc_system: gc.gc_system.clone(),
+            run_condition: None,
         }
     }
 
     // 失败时返回错误信息
-    #[pyo3(signature = (code, default_args, capture=None, self_object=None, work_dir=None))]
+    #[pyo3(signature = (code, default_args, capture=None, self_object=None, work_dir=None, run_condition=None))]
     fn load(
         &mut self,
         code: &str,
@@ -63,6 +66,7 @@ impl Lambda {
         capture: Option<PyObject>,
         self_object: Option<PyObject>,
         work_dir: Option<&str>,
+        run_condition: Option<PyObject>,
         py: Python<'_>,
     ) -> PyResult<()> {
         let dir_stack = DirStack::new(Some(&work_dir.unwrap_or_else(|| ".").into()));
@@ -163,6 +167,10 @@ impl Lambda {
         default_result.drop_ref();
         instruction_ref.drop_ref();
 
+        self.run_condition = match run_condition {
+            Some(condition_func) => Some(Arc::new(condition_func)),
+            None => None,
+        };
         return Ok(());
     }
 
@@ -338,8 +346,21 @@ impl Lambda {
         let _coro_id = coro_id.unwrap();
 
         let result = unsafe {
-            coroutine_pool.run_until_finished(self.gc_system.get_mut())
-        }; 
+            coroutine_pool.run_while(self.gc_system.get_mut(), |_| {
+                // 使用 run_condition 函数检查
+                if let Some(ref condition) = self.run_condition {
+                    match condition.call1(py, ()) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(VMError::DetailedError(
+                                format!("Run condition function failed: {}", e),
+                            ));
+                        }
+                    }
+                }
+                Ok(())
+            })
+        };
 
         if result.is_err() {
             return Err(XlangExecutionError::new_err(format!(
@@ -440,15 +461,12 @@ impl WrappedPyFunction {
         // 将Python可调用对象存储在Arc中以安全地在多个地方共享
         self.callable_ref = Some(Arc::new(py_callable));
         // 创建上下文并序列化为字节
-        let context =  
-            PackedCallableContext {
-                callable_ref: Arc::as_ptr(self.callable_ref.as_ref().unwrap()) as usize, // 将Arc的裸指针存储为整数
-                gc_arc: self.gc_system.get_inner() as usize
-            }
-        ;
+        let context = PackedCallableContext {
+            callable_ref: Arc::as_ptr(self.callable_ref.as_ref().unwrap()) as usize, // 将Arc的裸指针存储为整数
+            gc_arc: self.gc_system.get_inner() as usize,
+        };
         let serialized_context = bincode::serialize(&context).unwrap();
 
-        
         // 定义静态函数
         #[allow(deprecated)]
         fn py_function_static(
@@ -479,10 +497,9 @@ impl WrappedPyFunction {
             // 重新构造Arc
             let callable_ref = unsafe { Arc::from_raw(context.callable_ref as *const PyObject) };
             std::mem::forget(callable_ref.clone()); // 防止调用时释放
-            
-            let gc_system_arc = ArcUnsafeRefCellWrapper::from_inner(
-                context.gc_arc as *mut Inner<XlangGCSystem>,
-            );
+
+            let gc_system_arc =
+                ArcUnsafeRefCellWrapper::from_inner(context.gc_arc as *mut Inner<XlangGCSystem>);
 
             Python::with_gil(|py| {
                 // 确保参数是一个元组

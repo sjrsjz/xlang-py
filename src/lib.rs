@@ -3,10 +3,7 @@ use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyNone, PyString, PyT
 use pyo3::{create_exception, prelude::*};
 use xlang::{Lambda, WrappedPyFunction};
 use xlang_vm_core::executor::variable::{
-    VMBytes as XlangVMBytes, VMFloat as XlangVMFloat, VMInt as XlangVMInt,
-    VMKeyVal as XlangVMKeyVal, VMNamed as XlangVMNamed, VMNull as XlangVMNull,
-    VMRange as XlangVMRange, VMString as XlangVMString, VMTuple as XlangVMTuple,
-    VMWrapper as XlangVMWrapper,
+    try_copy_as_vmobject, try_repr_vmobject, try_to_string_vmobject, VMBytes as XlangVMBytes, VMFloat as XlangVMFloat, VMInt as XlangVMInt, VMKeyVal as XlangVMKeyVal, VMNamed as XlangVMNamed, VMNull as XlangVMNull, VMRange as XlangVMRange, VMString as XlangVMString, VMTuple as XlangVMTuple, VMWrapper as XlangVMWrapper
 };
 use xlang_vm_core::gc::GCRef as XlangGCRef;
 use xlang_vm_core::gc::GCSystem as XlangGCSystem;
@@ -701,10 +698,13 @@ fn extract_xlang_gc_ref(obj: &Bound<'_, PyAny>) -> PyResult<XlangGCRef> {
                 "WrappedPyFunction is None",
             )),
         }
+    } else if let Ok(mut vm_object) = obj.extract::<PyRefMut<VMObject>>() {
+        Ok(vm_object.gc_ref.clone_ref())
     } else {
         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-            "Expected a xlang VM type for extraction",
+            "Expected a xlang VM type (VMInt, VMFloat, VMString, VMNull, VMBytes, VMKeyVal, VMNamed, VMTuple, VMWrapper, VMRange, VMObject) or WrappedPyFunction",
         ))
+        
     }
 }
 
@@ -778,9 +778,8 @@ pub(crate) fn xlang_gc_ref_to_py_object(
         };
         Ok(Py::new(py, py_obj)?.into_pyobject(py)?.into())
     } else {
-        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-            "Unknown xlang VM type for PyObject conversion",
-        ))
+        let py_obj = VMObject::wrap(gc_system_arc, gc_ref.clone_ref());
+        Ok(Py::new(py, py_obj)?.into_pyobject(py)?.into())
     }
 }
 
@@ -1532,6 +1531,88 @@ impl VMRange {
     }
 }
 
+#[pyclass(unsendable)]
+#[derive(Clone)]
+struct VMObject {
+    gc_ref: XlangGCRef,
+    gc_system: ArcUnsafeRefCellWrapper<XlangGCSystem>,
+}
+
+impl VMObject {
+    fn wrap(
+        gc: ArcUnsafeRefCellWrapper<XlangGCSystem>,
+        xlang_object: XlangGCRef,
+    ) -> Self {
+       VMObject {
+            gc_ref: xlang_object,
+            gc_system: gc.clone(),
+        }
+    }    
+}
+
+impl GCRef for VMObject {
+    fn get_ref(&self) -> &XlangGCRef {
+        &self.gc_ref
+    }
+    fn get_mut_ref(&mut self) -> &mut XlangGCRef {
+        &mut self.gc_ref
+    }
+    fn clone_ref(&mut self) -> XlangGCRef {
+        self.gc_ref.clone_ref()
+    }
+    fn drop_ref(&mut self) {
+        self.gc_ref.drop_ref();
+    }
+}
+impl Drop for VMObject {
+    fn drop(&mut self) {
+        self.gc_ref.drop_ref();
+    }
+}
+
+#[pymethods]
+impl VMObject {
+    fn __repr__(&mut self) -> PyResult<String> {
+        let repr = try_repr_vmobject(&mut self.gc_ref, None);
+        match repr {
+            Ok(r) => Ok(r),
+            Err(_) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Failed to get VMObject representation",
+            )),
+        }
+    }
+
+    fn __str__(&mut self) -> PyResult<String> {
+        let str = try_to_string_vmobject(&mut self.gc_ref, None);
+        match str {
+            Ok(s) => Ok(s),
+            Err(_) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Failed to get VMObject string representation",
+            )),
+        }
+    }
+
+    fn clone(&mut self) -> Self {
+        let new_gc_ref = match self.gc_system.borrow_mut() {
+            Ok(mut gc_system) => {
+                match try_copy_as_vmobject(&mut self.gc_ref, &mut gc_system) {
+                    Ok(new_ref) => new_ref,
+                    Err(mut e) => {
+                        panic!("Failed to copy VMObject: {}", e.to_string());
+                    }
+                }
+            },
+            Err(_) => {
+                panic!("Failed to borrow GC system");
+            }
+        };
+        VMObject {
+            gc_ref: new_gc_ref,
+            gc_system: self.gc_system.clone(),
+        }
+    }
+}
+
 #[pymethods]
 impl GCSystem {
     #[new]
@@ -1693,6 +1774,10 @@ impl GCSystem {
             || value.is_instance_of::<VMKeyVal>()
             || value.is_instance_of::<VMNamed>()
             || value.is_instance_of::<VMTuple>()
+            || value.is_instance_of::<VMWrapper>()
+            || value.is_instance_of::<VMRange>()
+            || value.is_instance_of::<WrappedPyFunction>()
+            || value.is_instance_of::<VMObject>()
         {
             Ok(value.to_object(py))
         } else {

@@ -6,6 +6,13 @@
             "request": "launch",
             "program": "${workspaceFolder}/build_and_test.py",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Python 调试程序: Test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test/example.py",
+            "console": "integratedTerminal"
         }
     ]
 }
